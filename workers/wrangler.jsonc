@@ -1,0 +1,19 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gowa-whatsapp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "alias": {
+    "ws": "./src/worker-websocket.ts",
+    "whatsapp-rust-bridge": "./.generated/bridge.js",
+  },
+  "kv_namespaces": [{ "binding": "OAUTH_KV" }],
+  "durable_objects": {
+    "bindings": [{ "name": "ACCOUNT", "class_name": "WhatsAppAccount" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["WhatsAppAccount"] }],
+  "secrets": { "required": ["ADMIN_PASSWORD_HASH", "SESSION_ENCRYPTION_KEY"] },
+  "vars": { "EVENT_RETENTION_DAYS": "7", "MAX_MEDIA_BYTES": "2097152" },
+  "observability": { "enabled": false },
+}

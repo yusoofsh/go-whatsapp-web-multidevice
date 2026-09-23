@@ -1,3 +1,5 @@
+> **Cloudflare Workers port:** this fork adds a native TypeScript/Baileys deployment in [`workers/`](workers/README.md). Upstream Go GOWA is preserved. Read the port's compatibility and free-tier limits before deployment.
+
 <!-- markdownlint-disable MD041 -->
 <!-- markdownlint-disable-next-line MD033 -->
 <div align="center">

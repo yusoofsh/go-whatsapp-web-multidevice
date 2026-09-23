@@ -1,0 +1,50 @@
+name: Workers
+on:
+  push:
+    branches: [main, 'feat/cloudflare-workers']
+    paths: ['workers/**', '.github/workflows/workers.yml']
+  pull_request:
+    paths: ['workers/**', '.github/workflows/workers.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: workers-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: workers
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.2'
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun test
+      - run: bun run build
+      - name: Workerd OAuth, MCP, media and event integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          GOWA_PASSWORD='test-only-owner-password-not-for-production' bun scripts/secrets.ts > .dev.vars
+          setsid bun run wrangler dev --local --port 8899 --var DEVELOPMENT:true > runtime.log 2>&1 &
+          server=$!
+          trap 'kill -- -"$server" 2>/dev/null || true; rm -f .dev.vars' EXIT
+          ready=0
+          for attempt in $(seq 1 45); do
+            if curl --max-time 2 -fsS http://127.0.0.1:8899/health > /dev/null; then ready=1; break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then cat runtime.log; exit 1; fi
+          bun scripts/smoke.ts
