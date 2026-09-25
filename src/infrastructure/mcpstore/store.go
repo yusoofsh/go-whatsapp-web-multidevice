@@ -122,7 +122,12 @@ func ValidateMedia(filename, mediaType string, data []byte, max int) (string, er
 	return parsed, nil
 }
 func activeMIME(m string) bool {
-	return strings.Contains(m, "html") || strings.Contains(m, "javascript") || strings.Contains(m, "xml") || strings.Contains(m, "svg")
+	// OOXML Office MIME names contain "xml", but describe ZIP documents,
+	// not browser-executable XML. Only block actual active media types.
+	return m == "text/html" || m == "application/xhtml+xml" || m == "image/svg+xml" ||
+		m == "text/xml" || m == "application/xml" || strings.HasSuffix(m, "+xml") ||
+		m == "application/javascript" || m == "text/javascript" ||
+		m == "application/ecmascript" || m == "text/ecmascript"
 }
 func (s *Store) Stage(ctx context.Context, device, filename, mediaType string, data []byte) (Media, error) {
 	if device == "" {

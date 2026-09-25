@@ -28,7 +28,7 @@ func (h *ChatHandler) AddChatTools(mcpServer *server.MCPServer) {
 		mcpg.WithTitleAnnotation("Chat Queries"),
 		mcpg.WithReadOnlyHintAnnotation(false),
 		mcpg.WithDestructiveHintAnnotation(false),
-		mcpg.WithIdempotentHintAnnotation(true),
+		mcpg.WithIdempotentHintAnnotation(false),
 		mcpg.WithRawInputSchema(json.RawMessage(chatSchema)),
 	)
 	// NewTool defaults InputSchema.Type to "object"; clear it so only

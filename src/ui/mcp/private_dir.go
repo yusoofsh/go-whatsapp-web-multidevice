@@ -28,7 +28,10 @@ func ValidatePrivateDataDir(dataDir, publicDir string) error {
 		return err
 	}
 	if resolved, e := filepath.EvalSymlinks(public); e == nil {
-		public = resolved
+		public, err = filepath.Abs(resolved)
+		if err != nil {
+			return err
+		}
 	}
 	rel, err := filepath.Rel(public, data)
 	if err != nil {

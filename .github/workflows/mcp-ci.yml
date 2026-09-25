@@ -1,7 +1,5 @@
 name: MCP validation
 on:
-  push:
-    branches: [feat/mcp-parity-ghcr]
   pull_request:
     paths: ["src/**", "docker/**", ".github/workflows/mcp-*.yml"]
   workflow_call:

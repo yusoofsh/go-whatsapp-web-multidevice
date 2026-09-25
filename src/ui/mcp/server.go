@@ -24,7 +24,7 @@ type Deps struct {
 	Group   domainGroup.IGroupUsecase
 }
 
-// NewServer builds the MCPServer with the 5 consolidated tools registered.
+// NewServer registers the five upstream tools and optional media/event tools.
 func NewServer(deps Deps, resolver deviceResolver, options ...server.ServerOption) *server.MCPServer {
 	opts := []server.ServerOption{
 		server.WithToolCapabilities(true),

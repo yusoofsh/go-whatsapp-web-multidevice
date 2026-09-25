@@ -1,7 +1,8 @@
 services:
   gowa:
-    image: ghcr.io/yusoofsh/go-whatsapp-web-multidevice:${GOWA_IMAGE_TAG:-mcp}
+    image: ghcr.io/yusoofsh/go-whatsapp-web-multidevice:${GOWA_IMAGE_TAG:-mcp-parity}
     restart: unless-stopped
+    init: true
     stop_grace_period: 20s
     ports:
       - "127.0.0.1:${GOWA_PORT:-3001}:3001"

@@ -161,3 +161,19 @@ func TestEventListenersAndConcurrency(t *testing.T) {
 		t.Fatalf("got %d", count)
 	}
 }
+
+func TestOfficeAttachmentsAreNotActiveXML(t *testing.T) {
+	s := testStore(t)
+	for _, tc := range []struct{ name, mime string }{
+		{"report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+		{"report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+		{"report.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := s.Stage(context.Background(), "a", tc.name, tc.mime, []byte("PK\x03\x04office-container"))
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

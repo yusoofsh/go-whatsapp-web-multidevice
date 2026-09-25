@@ -8,6 +8,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
@@ -118,12 +119,15 @@ func startNativeMcpGateway(dm *whatsapp.DeviceManager, oauthServer *mcpoauth.Ser
 		}
 	}()
 	logrus.Infof("Native MCP streaming gateway listening on %s", listener.Addr())
+	var stopOnce sync.Once
 	return func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = handler.Close(ctx)
-		if srv.Shutdown(ctx) != nil {
-			_ = srv.Close()
-		}
+		stopOnce.Do(func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_ = handler.Close(ctx)
+			if srv.Shutdown(ctx) != nil {
+				_ = srv.Close()
+			}
+		})
 	}, nil
 }

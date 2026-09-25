@@ -235,6 +235,7 @@ func restServer(_ *cobra.Command, _ []string) {
 		}
 	case sig := <-sigCh:
 		logrus.Infof("Received %s — shutting down", sig)
+		stopMCP()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := app.ShutdownWithContext(shutdownCtx); err != nil {

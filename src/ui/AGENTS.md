@@ -27,6 +27,12 @@ usecases. REST and MCP share the `rest` process and device manager.
   layer. If no device reaches the tool, resolution returns an error.
 - Keep streaming disabled in the Fiber adaptor: an idle GET SSE connection can
   retain a goroutine/connection until shutdown. `mcp/route.go` mounts POST and DELETE.
+  Stateful streaming is opt-in through `mcp/native.go` and `cmd/mcp_runtime.go`,
+  on the native net/http gateway (default 3001). Authenticate each request and
+  bind the MCP session to principal and paired device. Do not re-enable Fiber SSE.
+- `whatsapp_media` and `whatsapp_events` use private `mcpstore` storage. Never
+  expose raw server paths, protocol keys or message bodies through event records.
+  MCP resources and staged media must retain the paired bare-JID device scope.
 - For authentication changes, read [MCP OAuth](../../docs/mcp-oauth.md) and
   `../cmd/mcp_oauth.go`. OAuth-protected MCP mounts before global Basic Auth;
   when OAuth is disabled, MCP uses the ordinary authenticated router.

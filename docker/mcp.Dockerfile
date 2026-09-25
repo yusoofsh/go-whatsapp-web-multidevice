@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM golang:1.26-alpine3.23 AS builder
+FROM golang:1.26.8-alpine3.23 AS builder
 RUN apk add --no-cache gcc musl-dev
 WORKDIR /build
 COPY src/go.mod src/go.sum ./
@@ -9,14 +9,14 @@ RUN CGO_ENABLED=1 go build -trimpath -ldflags='-w -s' -o /app/whatsapp .
 
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates tzdata ffmpeg libwebp-tools poppler-utils su-exec \
-    && addgroup -g 20000 gowagroup \
-    && adduser -D -u 20001 -G gowagroup gowauser
+    && addgroup -g 20000 gowa \
+    && adduser -D -u 20001 -G gowa gowauser
 WORKDIR /app
 COPY --from=builder /app/whatsapp /app/whatsapp
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh \
     && mkdir -p /app/storages /app/statics \
-    && chown -R gowauser:gowagroup /app
+    && chown -R gowauser:gowa /app
 ENV MCP_ENABLED=true MCP_STREAMING_ENABLED=true MCP_STREAM_PORT=3001
 EXPOSE 3001
 LABEL org.opencontainers.image.source="https://github.com/yusoofsh/go-whatsapp-web-multidevice" \

@@ -10,6 +10,8 @@ import urllib.parse
 import urllib.request
 
 BASE = os.environ.get("MCP_BASE_URL", "http://127.0.0.1:3101")
+if urllib.parse.urlparse(BASE).hostname not in ("localhost", "127.0.0.1", "::1"):
+    raise SystemExit("Smoke test is restricted to a fresh loopback test instance")
 PUBLIC = "https://mcp-ci.example.com"
 USER = "ci"
 PASSWORD = "temporary-ci-password-not-a-real-account"

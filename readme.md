@@ -1,3 +1,8 @@
+> **Fork: native MCP parity and GHCR image.** This branch extends the Go/Whatsmeow
+> server with history requests, private binary attachments and durable event
+> subscriptions. See [deployment and compatibility](docs/mcp-native.md).
+> It is separate from the experimental `feat/cloudflare-workers` port.
+
 <!-- markdownlint-disable MD041 -->
 <!-- markdownlint-disable-next-line MD033 -->
 <div align="center">
