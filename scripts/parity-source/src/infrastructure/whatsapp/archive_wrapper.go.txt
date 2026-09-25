@@ -1,0 +1,27 @@
+package whatsapp
+
+import (
+ "context"
+ "errors"
+
+ domain "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+)
+
+var _ domain.IArchiveRepository = (*deviceChatStorage)(nil)
+
+func (r *deviceChatStorage) archiveBackend(device string) (domain.IArchiveRepository,string,error) {
+ if device=="" {device=r.deviceID}
+ if device=="" || (r.deviceID!="" && device!=r.deviceID) {return nil,"",errors.New("archive device scope does not match storage wrapper")}
+ backend,ok:=r.base.(domain.IArchiveRepository)
+ if !ok {return nil,"",errors.New("archive queries are unavailable for this storage backend")}
+ return backend,device,nil
+}
+func (r *deviceChatStorage) QueryArchive(ctx context.Context,f domain.ArchiveFilter)([]*domain.Message,int64,error){
+ backend,id,err:=r.archiveBackend(f.DeviceID);if err!=nil{return nil,0,err};f.DeviceID=id;return backend.QueryArchive(ctx,f)
+}
+func (r *deviceChatStorage) ContextArchive(ctx context.Context,device,chat,id string,before,after int)([]*domain.Message,*domain.Message,[]*domain.Message,error){
+ backend,device,err:=r.archiveBackend(device);if err!=nil{return nil,nil,nil,err};return backend.ContextArchive(ctx,device,chat,id,before,after)
+}
+func (r *deviceChatStorage) CoverageArchive(ctx context.Context,device,chat string)(domain.ArchiveCoverage,error){
+ backend,device,err:=r.archiveBackend(device);if err!=nil{return domain.ArchiveCoverage{},err};return backend.CoverageArchive(ctx,device,chat)
+}
