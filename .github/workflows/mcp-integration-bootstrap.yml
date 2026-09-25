@@ -1,0 +1,35 @@
+name: Integrate MCP runtime
+on:
+  push:
+    branches: [feat/mcp-parity-ghcr]
+    paths: [scripts/mcp-upgrade.py, .github/workflows/mcp-integration-bootstrap.yml]
+permissions:
+  contents: write
+jobs:
+  integrate:
+    if: github.repository == 'yusoofsh/go-whatsapp-web-multidevice'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: feat/mcp-parity-ghcr
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: 1.26.8
+          cache: false
+      - name: Apply asserted integration and format Go changes
+        run: |
+          python3 scripts/mcp-upgrade.py
+          git diff --name-only origin/main -- '*.go' | xargs -r gofmt -w
+      - name: Commit implementation without changing unrelated branches
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src
+          if ! git diff --cached --quiet; then
+            git commit -m 'feat(mcp): integrate native runtime, media and event lifecycle'
+            git push origin HEAD:feat/mcp-parity-ghcr
+          fi
+          echo "Integrated commit: $(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
