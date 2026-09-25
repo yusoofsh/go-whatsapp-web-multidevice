@@ -1,0 +1,66 @@
+name: Complete capability parity
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/parity-source/**'
+      - 'scripts/complete-parity.py'
+      - '.github/workflows/complete-parity.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: complete-capability-parity
+  cancel-in-progress: true
+jobs:
+  integrate:
+    if: github.repository == 'yusoofsh/go-whatsapp-web-multidevice'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: 1.26.8
+          cache-dependency-path: src/go.sum
+      - name: Assert clean current main and apply exact integrations
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          python3 scripts/complete-parity.py
+          git diff --name-only -- '*.go' | xargs -r gofmt -w
+          find src -name '*parity*.go' -o -name 'archive*.go' -o -name 'history*.go' -o -name 'chat_query.go' | xargs -r gofmt -w
+          git diff --check
+      - name: Full Go suite with fake clients and temporary databases
+        working-directory: src
+        run: go test -count=1 -timeout 10m ./...
+      - name: Vet and native build
+        working-directory: src
+        run: |
+          go vet ./...
+          go build -trimpath -o /tmp/gowa .
+      - name: Race tests for MCP and storage
+        working-directory: src
+        run: go test -race -count=1 -timeout 5m ./ui/mcp/... ./infrastructure/mcpstore ./infrastructure/chatstorage
+      - name: Export actual compiled MCP schemas
+        working-directory: src
+        env:
+          GOWA_SCHEMA_EXPORT: ${{ github.workspace }}/docs/mcp-tools.json
+        run: go test -count=1 -run '^TestExportParitySchemas$' ./ui/mcp
+      - name: Commit only validated source to main
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          # Workflow changes are published separately through the authorized connector.
+          git restore .github/workflows/mcp-ghcr.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src docs scripts/mcp-container-smoke.py
+          git rm -r scripts/parity-source scripts/complete-parity.py
+          git diff --cached --check
+          git commit -s -m 'feat(mcp): complete audited archive and REST capability parity'
+          git push origin HEAD:main
+          printf 'Validated source commit: `%s`\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
