@@ -2,10 +2,7 @@ name: Complete capability parity
 on:
   push:
     branches: [main]
-    paths:
-      - 'scripts/parity-source/**'
-      - 'scripts/complete-parity.py'
-      - '.github/workflows/complete-parity.yml'
+    paths: ['scripts/parity-source/**', 'scripts/complete-parity.py', 'scripts/parity-fixes.py', '.github/workflows/complete-parity.yml']
   workflow_dispatch:
 permissions:
   contents: write
@@ -31,8 +28,9 @@ jobs:
           test -z "$(git status --porcelain)"
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
           python3 scripts/complete-parity.py
+          python3 scripts/parity-fixes.py
           git diff --name-only -- '*.go' | xargs -r gofmt -w
-          find src -name '*parity*.go' -o -name 'archive*.go' -o -name 'history*.go' -o -name 'chat_query.go' | xargs -r gofmt -w
+          find src -name '*parity*.go' -o -name 'archive*.go' -o -name 'history*.go' -o -name 'chat_query.go' -o -name 'reaction_scope*.go' | xargs -r gofmt -w
           git diff --check
       - name: Full Go suite with fake clients and temporary databases
         working-directory: src
@@ -54,12 +52,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
-          # Workflow changes are published separately through the authorized connector.
           git restore .github/workflows/mcp-ghcr.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add src docs scripts/mcp-container-smoke.py
-          git rm -r scripts/parity-source scripts/complete-parity.py
+          git rm -r scripts/parity-source scripts/complete-parity.py scripts/parity-fixes.py
           git diff --cached --check
           git commit -s -m 'feat(mcp): complete audited archive and REST capability parity'
           git push origin HEAD:main
