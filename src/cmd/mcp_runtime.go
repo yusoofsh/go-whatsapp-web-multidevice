@@ -93,6 +93,12 @@ func startNativeMcpGateway(dm *whatsapp.DeviceManager, oauthServer *mcpoauth.Ser
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	route := config.AppBasePath + "/mcp"
 	gateway := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write([]byte(`{"status":"ok","transport":"streamable-http"}`))
+			return
+		}
 		if r.URL.Path == route {
 			handler.ServeHTTP(w, r)
 			return
