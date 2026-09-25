@@ -24,11 +24,11 @@ func InitMcpChat(chatService domainChat.IChatUsecase, userService domainUser.IUs
 
 func (h *ChatHandler) AddChatTools(mcpServer *server.MCPServer) {
 	tool := mcpg.NewTool("whatsapp_chat",
-		mcpg.WithDescription("Query WhatsApp chats and contacts: list_chats, list_contacts, get_messages (chat history with filters), or archive/unarchive a chat."),
+		mcpg.WithDescription("Query WhatsApp chats and contacts: list_chats, list_contacts, get_messages (chat history with filters), request_history (older messages from the phone), or archive/unarchive a chat."),
 		mcpg.WithTitleAnnotation("Chat Queries"),
 		mcpg.WithReadOnlyHintAnnotation(false),
 		mcpg.WithDestructiveHintAnnotation(false),
-		mcpg.WithIdempotentHintAnnotation(true),
+		mcpg.WithIdempotentHintAnnotation(false),
 		mcpg.WithRawInputSchema(json.RawMessage(chatSchema)),
 	)
 	// NewTool defaults InputSchema.Type to "object"; clear it so only
@@ -98,6 +98,18 @@ func (h *ChatHandler) handleChat(ctx context.Context, request mcpg.CallToolReque
 			return mcpg.NewToolResultError(err.Error()), nil
 		}
 		return mcpg.NewToolResultStructured(resp, fmt.Sprintf("Retrieved %d messages from %s", len(resp.Data), chatJID)), nil
+	case "request_history":
+		count := request.GetInt("count", 50)
+		if count < 1 || count > 500 {
+			return mcpg.NewToolResultError("count must be 1..500"), nil
+		}
+		resp, err := h.chatService.RequestChatHistory(ctx, domainChat.RequestChatHistoryRequest{
+			ChatJID: request.GetString("chat_jid", ""), Count: count,
+		})
+		if err != nil {
+			return mcpg.NewToolResultError(err.Error()), nil
+		}
+		return mcpg.NewToolResultStructured(resp, "History requested; query get_messages after history.sync. WhatsApp decides what is available."), nil
 	case "archive":
 		req := domainChat.ArchiveChatRequest{
 			ChatJID:  request.GetString("chat_jid", ""),

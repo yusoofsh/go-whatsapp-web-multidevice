@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/mcpstore"
 
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
 	mcpg "github.com/mark3labs/mcp-go/mcp"
@@ -11,12 +12,17 @@ import (
 )
 
 type SendHandler struct {
+	data        *mcpstore.Store
 	sendService domainSend.ISendUsecase
 	resolver    deviceResolver
 }
 
-func InitMcpSend(sendService domainSend.ISendUsecase, resolver deviceResolver) *SendHandler {
-	return &SendHandler{sendService: sendService, resolver: resolver}
+func InitMcpSend(sendService domainSend.ISendUsecase, resolver deviceResolver, stores ...*mcpstore.Store) *SendHandler {
+	h := &SendHandler{sendService: sendService, resolver: resolver}
+	if len(stores) > 0 {
+		h.data = stores[0]
+	}
+	return h
 }
 
 func (s *SendHandler) AddSendTools(mcpServer *server.MCPServer) {
@@ -54,6 +60,11 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 		IsForwarded: request.GetBool("is_forwarded", false),
 	}
 
+	upload, cleanup, err := stagedUpload(ctx, request, s.data, msgType)
+	if err != nil {
+		return mcpg.NewToolResultError(err.Error()), nil
+	}
+	defer cleanup()
 	var res domainSend.GenericResponse
 	switch msgType {
 	case "text":
@@ -67,6 +78,7 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 	case "image":
 		imageURL := request.GetString("image_url", "")
 		res, err = s.sendService.SendImage(ctx, domainSend.ImageRequest{
+			Image:       upload,
 			BaseRequest: base,
 			ImageURL:    &imageURL,
 			Caption:     request.GetString("caption", ""),
@@ -77,6 +89,7 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 	case "video":
 		videoURL := request.GetString("video_url", "")
 		res, err = s.sendService.SendVideo(ctx, domainSend.VideoRequest{
+			Video:       upload,
 			BaseRequest: base,
 			VideoURL:    &videoURL,
 			Caption:     request.GetString("caption", ""),
@@ -88,6 +101,7 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 	case "audio":
 		audioURL := request.GetString("audio_url", "")
 		res, err = s.sendService.SendAudio(ctx, domainSend.AudioRequest{
+			Audio:       upload,
 			BaseRequest: base,
 			AudioURL:    &audioURL,
 			PTT:         request.GetBool("ptt", false),
@@ -95,6 +109,7 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 	case "document":
 		fileURL := request.GetString("file_url", "")
 		res, err = s.sendService.SendFile(ctx, domainSend.FileRequest{
+			File:        upload,
 			BaseRequest: base,
 			FileURL:     &fileURL,
 			Caption:     request.GetString("caption", ""),
@@ -102,6 +117,7 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 	case "sticker":
 		stickerURL := request.GetString("sticker_url", "")
 		res, err = s.sendService.SendSticker(ctx, domainSend.StickerRequest{
+			Sticker:     upload,
 			BaseRequest: base,
 			StickerURL:  &stickerURL,
 		})

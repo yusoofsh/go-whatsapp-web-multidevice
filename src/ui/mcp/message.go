@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/mcpstore"
 
 	domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
@@ -12,12 +13,17 @@ import (
 )
 
 type MessageHandler struct {
+	data           *mcpstore.Store
 	messageService domainMessage.IMessageUsecase
 	resolver       deviceResolver
 }
 
-func InitMcpMessage(messageService domainMessage.IMessageUsecase, resolver deviceResolver) *MessageHandler {
-	return &MessageHandler{messageService: messageService, resolver: resolver}
+func InitMcpMessage(messageService domainMessage.IMessageUsecase, resolver deviceResolver, stores ...*mcpstore.Store) *MessageHandler {
+	h := &MessageHandler{messageService: messageService, resolver: resolver}
+	if len(stores) > 0 {
+		h.data = stores[0]
+	}
+	return h
 }
 
 func (h *MessageHandler) AddMessageTools(mcpServer *server.MCPServer) {
@@ -104,9 +110,12 @@ func (h *MessageHandler) handleMessage(ctx context.Context, request mcpg.CallToo
 		}
 		return mcpg.NewToolResultText(fmt.Sprintf("Message %s star=%t", messageID, isStarred)), nil
 	case "download_media":
-		resp, err := h.messageService.DownloadMedia(ctx, domainMessage.DownloadMediaRequest{MessageID: messageID, Phone: phone})
+		resp, err := h.messageService.DownloadMedia(ctx, domainMessage.DownloadMediaRequest{MessageID: messageID, Phone: phone, MCPPrivate: h.data != nil})
 		if err != nil {
 			return mcpg.NewToolResultError(err.Error()), nil
+		}
+		if h.data != nil {
+			return h.importDownload(ctx, request, resp)
 		}
 		return mcpg.NewToolResultStructured(resp, fmt.Sprintf("Media saved to %s (%s)", resp.FilePath, resp.MediaType)), nil
 	default:

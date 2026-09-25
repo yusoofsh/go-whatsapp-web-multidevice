@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -461,7 +462,14 @@ func (service serviceMessage) DownloadMedia(ctx context.Context, request domainM
 	}
 
 	// Query the message from chat storage
-	message, err := service.chatStorageRepo.GetMessageByID(request.MessageID)
+	deviceID := deviceIDFromContext(ctx)
+	if deviceID == "" {
+		return response, fmt.Errorf("device context required for media download")
+	}
+	if service.chatStorageRepo == nil {
+		return response, fmt.Errorf("chat storage is disabled")
+	}
+	message, err := service.chatStorageRepo.GetMessageByIDChatAndDevice(deviceID, dataWaRecipient.String(), request.MessageID)
 	if err != nil {
 		return response, fmt.Errorf("message not found: %v", err)
 	}
@@ -483,7 +491,15 @@ func (service serviceMessage) DownloadMedia(ctx context.Context, request domainM
 	}
 
 	// Create directory structure for organized storage
-	chatDir := filepath.Join(config.PathMedia, utils.ExtractPhoneNumber(message.ChatJID))
+	root := config.PathMedia
+	if request.MCPPrivate {
+		if message.FileLength > 10<<20 {
+			return response, fmt.Errorf("MCP attachment exceeds 10 MiB limit")
+		}
+		root = filepath.Join(config.McpDataDir, "downloads")
+	}
+	scopeHash := sha256.Sum256([]byte(deviceID))
+	chatDir := filepath.Join(root, fmt.Sprintf("%x", scopeHash[:16]), utils.ExtractPhoneNumber(message.ChatJID))
 	dateDir := filepath.Join(chatDir, message.Timestamp.Format("2006-01-02"))
 
 	err = os.MkdirAll(dateDir, 0755)

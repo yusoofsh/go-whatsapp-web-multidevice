@@ -105,14 +105,7 @@ func registerMcpOAuth(app *fiber.App, dm *whatsapp.DeviceManager) (*mcpoauth.Ser
 		mcpRouter = app.Group(config.AppBasePath)
 	}
 	useMcpOAuthMiddleware(mcpRouter, oauthServer.MCPAuthMiddleware(validateCredential))
-	uimcp.Register(mcpRouter, dm, uimcp.Deps{
-		App:     appUsecase,
-		Send:    sendUsecase,
-		Chat:    chatUsecase,
-		User:    userUsecase,
-		Message: messageUsecase,
-		Group:   groupUsecase,
-	})
+	uimcp.Register(mcpRouter, dm, runtimeMcpDeps())
 
 	return oauthServer, true, nil
 }

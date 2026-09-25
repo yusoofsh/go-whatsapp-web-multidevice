@@ -45,6 +45,17 @@ func init() {
 func restServer(_ *cobra.Command, _ []string) {
 	// registerMcpOAuth depends on these values being loaded after flag parsing.
 	loadMcpOAuthEnvConfig()
+	loadMcpRuntimeConfig()
+	if err := initializeMcpData(); err != nil {
+		logrus.Fatalln("MCP data initialization: ", err)
+	}
+	defer func() {
+		whatsapp.SetMCPEventStore(nil)
+		if mcpData != nil {
+			_ = mcpData.Close()
+			mcpData = nil
+		}
+	}()
 	fiberConfig := fiber.Config{
 		TrustProxy: true,
 		BodyLimit:  int(config.WhatsappSettingMaxVideoSize),
@@ -160,14 +171,7 @@ func restServer(_ *cobra.Command, _ []string) {
 	// one whatsmeow session. With OAuth disabled it keeps the existing global
 	// Basic Auth behavior; OAuth-enabled MCP was already mounted above.
 	if config.McpEnabled && !mcpOAuthRegistered {
-		uimcp.Register(apiGroup, dm, uimcp.Deps{
-			App:     appUsecase,
-			Send:    sendUsecase,
-			Chat:    chatUsecase,
-			User:    userUsecase,
-			Message: messageUsecase,
-			Group:   groupUsecase,
-		})
+		uimcp.Register(apiGroup, dm, runtimeMcpDeps())
 	}
 
 	// Chatwoot sync + per-device config routes - require authentication (the
@@ -196,6 +200,11 @@ func restServer(_ *cobra.Command, _ []string) {
 	headerDeviceGroup := apiGroup.Group("", middleware.DeviceMiddleware(dm))
 	registerDeviceScopedRoutes(headerDeviceGroup)
 
+	stopMCP, err := startNativeMcpGateway(dm, oauthServer)
+	if err != nil {
+		logrus.Fatalln("Native MCP startup: ", err)
+	}
+	defer stopMCP()
 	go websocket.RunHub()
 
 	// Set auto reconnect to whatsapp server after booting
@@ -226,6 +235,7 @@ func restServer(_ *cobra.Command, _ []string) {
 		}
 	case sig := <-sigCh:
 		logrus.Infof("Received %s — shutting down", sig)
+		stopMCP()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := app.ShutdownWithContext(shutdownCtx); err != nil {

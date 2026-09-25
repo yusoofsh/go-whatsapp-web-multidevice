@@ -1,7 +1,7 @@
 ############################
 # STEP 1 build executable binary
 ############################
-FROM golang:1.26-alpine3.23 AS builder
+FROM golang:1.26.8-alpine3.23 AS builder
 RUN apk add --no-cache gcc musl-dev gcompat
 WORKDIR /whatsapp
 
@@ -28,6 +28,7 @@ RUN addgroup -g "${APP_GID}" gowa && \
 
 ENV TZ=UTC
 WORKDIR /app
+EXPOSE 3000 3001
 
 # Copy compiled from builder.
 COPY --from=builder /app/whatsapp /app/whatsapp
