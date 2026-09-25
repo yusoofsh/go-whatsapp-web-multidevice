@@ -8,3 +8,15 @@
 .env.test
 .env.production
 # Keep docker/ in context so the image can COPY entrypoint.sh (see docker/golang.Dockerfile).
+
+# Runtime credentials and WhatsApp archives must never enter a build context.
+**/*.env
+**/.env*
+**/storages
+**/statics
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/__pycache__
+**/node_modules
+.worktrees

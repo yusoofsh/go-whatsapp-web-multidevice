@@ -44,3 +44,8 @@ docs/superpowers/
 # whatsmeow store (legacy path)
 src/whatsapp/
 .mcp.json
+
+# Local native MCP deployment credentials and Python smoke-test caches
+docker/mcp.env
+__pycache__/
+*.pyc

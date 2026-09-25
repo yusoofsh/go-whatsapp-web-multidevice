@@ -2,7 +2,7 @@ name: MCP GHCR
 on:
   push:
     branches: [feat/mcp-parity-ghcr, main]
-    paths: ['src/**', 'docker/**', 'scripts/mcp-container-smoke.py', '.github/workflows/mcp-*.yml']
+    paths: ['src/**', 'docker/**', '.dockerignore', 'scripts/mcp-container-smoke.py', '.github/workflows/mcp-*.yml']
     tags: ['mcp-v*']
   workflow_dispatch:
 permissions:
