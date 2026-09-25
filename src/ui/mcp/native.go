@@ -150,6 +150,7 @@ func (h *NativeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, id := range expired {
 		h.mcp.UnregisterSession(context.Background(), id)
 	}
+	isInitialize := false
 	if r.Method == http.MethodPost {
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, mcpstore.MaxRequestBytes))
 		if err != nil {
@@ -165,6 +166,7 @@ func (h *NativeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			} `json:"params"`
 		}
 		if json.Unmarshal(body, &envelope) == nil {
+			isInitialize = envelope.Method == "initialize"
 			if envelope.Method == "initialize" {
 				// Serialize admission, not ordinary tools, to enforce a hard session cap.
 				h.initializeMu.Lock()
@@ -205,6 +207,15 @@ func (h *NativeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
+	}
+	// The SDK does not validate session IDs on GET. Enforce ownership here
+	// for every non-initialize method, including GET, before opening a stream.
+	if !isInitialize {
+		terminated, err := h.ResolveSessionIdManager(r).Validate(r.Header.Get("Mcp-Session-Id"))
+		if err != nil || terminated {
+			http.Error(w, "invalid MCP session", http.StatusNotFound)
+			return
+		}
 	}
 	if r.Method == http.MethodGet {
 		// Force periodic reauthentication, including after token revocation. A client
