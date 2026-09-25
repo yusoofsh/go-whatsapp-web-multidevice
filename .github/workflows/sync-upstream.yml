@@ -1,0 +1,63 @@
+name: Sync verified upstream
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/resolve-upstream.py', '.github/workflows/sync-upstream.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: sync-verified-upstream
+  cancel-in-progress: true
+jobs:
+  integrate:
+    if: github.repository == 'yusoofsh/go-whatsapp-web-multidevice'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: 1.26.8
+          cache-dependency-path: src/go.sum
+      - name: Prepare merge of pinned upstream, preserving history
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream https://github.com/aldinokemal/go-whatsapp-web-multidevice.git
+          git fetch upstream main
+          git merge --no-ff --no-commit 831a851e677f48e25aa671170daade586f798551 || test -n "$(git diff --name-only --diff-filter=U)"
+          python3 scripts/resolve-upstream.py
+          git diff --name-only HEAD -- '*.go' | xargs -r gofmt -w
+          git diff --check
+          git diff --cached --stat
+      - name: Full Go suite, vet and build
+        working-directory: src
+        run: |
+          go test -count=1 -timeout 10m ./...
+          go vet ./...
+          go build -trimpath -o /tmp/gowa .
+      - name: Race tests
+        working-directory: src
+        run: go test -race -count=1 -timeout 5m ./ui/mcp/... ./infrastructure/mcpstore ./infrastructure/chatstorage
+      - name: Export merged server schemas
+        working-directory: src
+        env:
+          GOWA_SCHEMA_EXPORT: ${{ github.workspace }}/docs/mcp-tools.json
+        run: go test -count=1 -run '^TestExportParitySchemas$' ./ui/mcp
+      - name: Commit verified merge without force pushing
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+          test -f .git/MERGE_HEAD
+          git add src docs readme.md scripts/mcp-container-smoke.py
+          git diff --cached --check
+          git commit -s -m 'Merge upstream 831a851 (v9.5.0 plus whatsmeow update), preserving MCP capability parity'
+          git merge-base --is-ancestor 831a851e677f48e25aa671170daade586f798551 HEAD
+          git push origin HEAD:main
+          printf 'Verified upstream merge commit: `%s`\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
