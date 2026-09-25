@@ -8,14 +8,14 @@ import (
 	domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/mcpstore"
 	"github.com/mark3labs/mcp-go/server"
- "github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/mcpstore"
 )
 
 // Deps carries the usecase instances the MCP tools call — the same instances
 // the REST handlers hold, so both surfaces share one whatsmeow session.
 type Deps struct {
- Data *mcpstore.Store
+	Data    *mcpstore.Store
 	App     domainApp.IAppUsecase
 	Send    domainSend.ISendUsecase
 	Chat    domainChat.IChatUsecase
@@ -33,14 +33,18 @@ func NewServer(deps Deps, resolver deviceResolver, options ...server.ServerOptio
 		// inputValidator stays nil and the conditionals are advisory only.
 		server.WithInputSchemaValidation(),
 	}
- if deps.Data != nil {opts=append(opts,server.WithResourceCapabilities(false,false))}
- opts=append(opts,options...)
- s:=server.NewMCPServer("WhatsApp Web Multidevice MCP Server",config.AppVersion,opts...)
- InitMcpSend(deps.Send,resolver,deps.Data).AddSendTools(s)
-	InitMcpMessage(deps.Message,resolver,deps.Data).AddMessageTools(s)
+	if deps.Data != nil {
+		opts = append(opts, server.WithResourceCapabilities(false, false))
+	}
+	opts = append(opts, options...)
+	s := server.NewMCPServer("WhatsApp Web Multidevice MCP Server", config.AppVersion, opts...)
+	InitMcpSend(deps.Send, resolver, deps.Data).AddSendTools(s)
+	InitMcpMessage(deps.Message, resolver, deps.Data).AddMessageTools(s)
 	InitMcpChat(deps.Chat, deps.User, resolver).AddChatTools(s)
 	InitMcpGroup(deps.Group, resolver).AddGroupTools(s)
 	InitMcpApp(deps.App, resolver).AddAppTools(s)
-	if deps.Data!=nil {registerDataTools(s,deps.Data,resolver)}
+	if deps.Data != nil {
+		registerDataTools(s, deps.Data, resolver)
+	}
 	return s
 }

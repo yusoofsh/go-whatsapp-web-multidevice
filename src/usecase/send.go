@@ -210,6 +210,8 @@ func (service serviceSend) wrapSendMessage(ctx context.Context, client *whatsmeo
 			} else {
 				logrus.Warnf("Failed to store sent message %s to %s: %v", ts.ID, recipient.String(), err)
 			}
+		} else {
+			whatsapp.RecordMCPEvent(storeCtx, deviceIDFromContext(storeCtx), "message.sent", recipient.ToNonAD().String(), ts.ID)
 		}
 	}()
 

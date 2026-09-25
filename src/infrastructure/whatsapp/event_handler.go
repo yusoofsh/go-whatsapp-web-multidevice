@@ -27,6 +27,13 @@ func handler(ctx context.Context, instance *DeviceInstance, rawEvt any) {
 
 	// Ensure downstream handlers see the device context (used for device-scoped storage).
 	ctx = ContextWithDevice(ctx, instance)
+	eventDevice := instance.JID()
+	defer func() {
+		if eventDevice == "" {
+			eventDevice = instance.JID()
+		}
+		recordMCPProtocolEvent(ctx, eventDevice, rawEvt)
+	}()
 
 	chatStorageRepo := instance.GetChatStorage()
 	client := instance.GetClient()

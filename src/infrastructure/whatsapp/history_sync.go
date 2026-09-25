@@ -53,6 +53,8 @@ func handleHistorySync(ctx context.Context, evt *events.HistorySync, chatStorage
 	if chatStorageRepo != nil {
 		if err := processHistorySync(ctx, evt.Data, chatStorageRepo, client); err != nil {
 			log.Errorf("Failed to process history sync to database: %v", err)
+		} else {
+			RecordMCPEvent(ctx, client.Store.ID.ToNonAD().String(), "history.sync", "", "")
 		}
 	}
 }

@@ -43,10 +43,10 @@ type StarRequest struct {
 }
 
 type DownloadMediaRequest struct {
- // MCPPrivate keeps MCP downloads outside publicly served statics.
- MCPPrivate bool `json:"-"`
-	MessageID string `json:"message_id" uri:"message_id"`
-	Phone     string `json:"phone" form:"phone"`
+	// MCPPrivate keeps MCP downloads outside publicly served statics.
+	MCPPrivate bool   `json:"-"`
+	MessageID  string `json:"message_id" uri:"message_id"`
+	Phone      string `json:"phone" form:"phone"`
 }
 
 type DownloadMediaResponse struct {
