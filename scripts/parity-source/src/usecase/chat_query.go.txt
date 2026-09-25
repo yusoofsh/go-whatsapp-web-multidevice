@@ -1,0 +1,24 @@
+package usecase
+
+import (
+ "context"
+ "time"
+
+ storage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+)
+
+// Production SQLite combines search and every existing per-chat filter in one
+// snapshot. Keep the old repository contract usable for external implementations.
+func (service serviceChat) queryStoredChatMessages(ctx context.Context,filter *storage.MessageFilter,search string)([]*storage.Message,int64,error){
+ if backend,ok:=service.chatStorageRepo.(storage.IArchiveRepository);ok{
+  ctx,cancel:=context.WithTimeout(ctx,15*time.Second);defer cancel()
+  return backend.QueryArchive(ctx,storage.ArchiveFilter{DeviceID:filter.DeviceID,ChatJID:filter.ChatJID,Search:search,StartTime:filter.StartTime,EndTime:filter.EndTime,MediaOnly:filter.MediaOnly,IsFromMe:filter.IsFromMe,Limit:filter.Limit,Offset:filter.Offset,AllowLargeOffset:true})
+ }
+ var messages []*storage.Message
+ var err error
+ if search!=""{messages,err=service.chatStorageRepo.SearchMessages(filter.DeviceID,filter.ChatJID,search,filter.Limit)}else{messages,err=service.chatStorageRepo.GetMessages(filter)}
+ if err!=nil{return nil,0,err}
+ total,countErr:=service.chatStorageRepo.GetChatMessageCountByDevice(filter.DeviceID,filter.ChatJID)
+ if countErr!=nil{total=0}
+ return messages,total,nil
+}
