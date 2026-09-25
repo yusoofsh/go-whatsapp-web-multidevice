@@ -97,7 +97,8 @@ assert {"whatsapp_chat", "whatsapp_send", "whatsapp_message", "whatsapp_media", 
 chat = next(tool for tool in result["tools"] if tool["name"] == "whatsapp_chat")
 assert "request_history" in chat["inputSchema"]["properties"]["action"]["enum"]
 assert {"whatsapp_history", "whatsapp_profile", "whatsapp_newsletter"} <= names
-assert len(names) == 10
+assert len(names) == 11
+assert "whatsapp_schedule" in names
 history = next(tool for tool in result["tools"] if tool["name"] == "whatsapp_history")
 assert set(history["inputSchema"]["properties"]["action"]["enum"]) == {"search_all", "context", "export", "coverage", "request_backfill"}
 print("PASS OAuth-authenticated stateful MCP and parity tool discovery")

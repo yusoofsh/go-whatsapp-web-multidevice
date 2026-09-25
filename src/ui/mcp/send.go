@@ -56,8 +56,9 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 	}
 
 	base := domainSend.BaseRequest{
-		Phone:       phone,
-		IsForwarded: request.GetBool("is_forwarded", false),
+		ScheduleOptions: scheduleOptions(request),
+		Phone:           phone,
+		IsForwarded:     request.GetBool("is_forwarded", false),
 	}
 
 	upload, cleanup, err := stagedUpload(ctx, request, s.data, msgType)
@@ -80,8 +81,9 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 		res, err = s.sendService.SendImage(ctx, domainSend.ImageRequest{
 			Image:       upload,
 			BaseRequest: base,
-			ImageURL:    &imageURL,
+			ImageURL:    optionalMediaURL(imageURL),
 			Caption:     request.GetString("caption", ""),
+			Mentions:    request.GetStringSlice("mentions", nil),
 			ViewOnce:    request.GetBool("view_once", false),
 			Compress:    request.GetBool("compress", true),
 			HD:          request.GetBool("hd", false),
@@ -91,8 +93,9 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 		res, err = s.sendService.SendVideo(ctx, domainSend.VideoRequest{
 			Video:       upload,
 			BaseRequest: base,
-			VideoURL:    &videoURL,
+			VideoURL:    optionalMediaURL(videoURL),
 			Caption:     request.GetString("caption", ""),
+			Mentions:    request.GetStringSlice("mentions", nil),
 			ViewOnce:    request.GetBool("view_once", false),
 			GifPlayback: request.GetBool("gif_playback", false),
 			Compress:    request.GetBool("compress", false),
@@ -103,7 +106,7 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 		res, err = s.sendService.SendAudio(ctx, domainSend.AudioRequest{
 			Audio:       upload,
 			BaseRequest: base,
-			AudioURL:    &audioURL,
+			AudioURL:    optionalMediaURL(audioURL),
 			PTT:         request.GetBool("ptt", false),
 		})
 	case "document":
@@ -111,15 +114,16 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 		res, err = s.sendService.SendFile(ctx, domainSend.FileRequest{
 			File:        upload,
 			BaseRequest: base,
-			FileURL:     &fileURL,
+			FileURL:     optionalMediaURL(fileURL),
 			Caption:     request.GetString("caption", ""),
+			Mentions:    request.GetStringSlice("mentions", nil),
 		})
 	case "sticker":
 		stickerURL := request.GetString("sticker_url", "")
 		res, err = s.sendService.SendSticker(ctx, domainSend.StickerRequest{
 			Sticker:     upload,
 			BaseRequest: base,
-			StickerURL:  &stickerURL,
+			StickerURL:  optionalMediaURL(stickerURL),
 		})
 	case "location":
 		res, err = s.sendService.SendLocation(ctx, domainSend.LocationRequest{
@@ -148,9 +152,10 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 		})
 	case "forward":
 		forwardReq := domainSend.ForwardRequest{
-			MessageID:     request.GetString("message_id", ""),
-			Phone:         phone,
-			ForceReupload: request.GetBool("force_reupload", false),
+			ScheduleOptions: scheduleOptions(request),
+			MessageID:       request.GetString("message_id", ""),
+			Phone:           phone,
+			ForceReupload:   request.GetBool("force_reupload", false),
 		}
 		if args := request.GetArguments(); args != nil {
 			if _, ok := args["duration"]; ok {
@@ -166,5 +171,27 @@ func (s *SendHandler) handleSend(ctx context.Context, request mcpg.CallToolReque
 	if err != nil {
 		return mcpg.NewToolResultError(err.Error()), nil
 	}
+	if res.ScheduleID != "" {
+		return mcpg.NewToolResultStructured(res, fmt.Sprintf("%s scheduled with schedule_id %s, next run %s", msgType, res.ScheduleID, res.NextRunAt)), nil
+	}
 	return mcpg.NewToolResultText(fmt.Sprintf("%s sent successfully with ID %s", msgType, res.MessageID)), nil
+}
+
+func scheduleOptions(request mcpg.CallToolRequest) domainSend.ScheduleOptions {
+	return domainSend.ScheduleOptions{
+		ScheduledAt:     request.GetString("scheduled_at", ""),
+		Timezone:        request.GetString("timezone", ""),
+		Recurrence:      request.GetString("recurrence", ""),
+		Weekdays:        request.GetIntSlice("weekdays", nil),
+		DayOfMonth:      request.GetInt("day_of_month", 0),
+		EndAt:           request.GetString("end_at", ""),
+		OccurrenceLimit: request.GetInt("occurrence_limit", 0),
+	}
+}
+
+func optionalMediaURL(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }

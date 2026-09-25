@@ -11,148 +11,191 @@ const sendSchema = `{
     "phone"
   ],
   "properties": {
-    "type": {
-      "type": "string",
-      "enum": [
-        "text",
-        "image",
-        "video",
-        "audio",
-        "document",
-        "sticker",
-        "location",
-        "contact",
-        "poll",
-        "link",
-        "forward"
-      ],
-      "description": "Kind of message to send"
+  "type": {
+    "type": "string",
+    "enum": [
+      "text",
+      "image",
+      "video",
+      "audio",
+      "document",
+      "sticker",
+      "location",
+      "contact",
+      "poll",
+      "link",
+      "forward"
+    ],
+    "description": "Kind of message to send"
+  },
+  "phone": {
+    "type": "string",
+    "description": "Destination phone number or group JID"
+  },
+  "device_id": {
+    "type": "string",
+    "description": "Act as this device instead of the connection default (X-Device-Id header)"
+  },
+  "is_forwarded": {
+    "type": "boolean",
+    "description": "Mark the message as forwarded (default false)"
+  },
+  "message": {
+    "type": "string",
+    "description": "type=text: the text body"
+  },
+  "reply_message_id": {
+    "type": "string",
+    "description": "type=text: message ID to reply to"
+  },
+  "mentions": {
+    "type": "array",
+    "items": {
+      "type": "string"
     },
-    "phone": {
-      "type": "string",
-      "description": "Destination phone number or group JID"
+    "description": "text/image/video/document: ghost mentions; \"@everyone\" mentions all group participants"
+  },
+  "image_url": {
+    "type": "string",
+    "description": "type=image: URL of the image (fetched server-side)"
+  },
+  "caption": {
+    "type": "string",
+    "description": "image/video/document/link: caption text"
+  },
+  "view_once": {
+    "type": "boolean",
+    "description": "image/video: view-once message (default false)"
+  },
+  "compress": {
+    "type": "boolean",
+    "description": "image (default true) / video (default false): re-encode before sending"
+  },
+  "hd": {
+    "type": "boolean",
+    "description": "image/video: send HD without upscaling (image: 2560px max edge; video: H.264 8-bit YUV 4:2:0 at CRF 23, capped at 1280x1280); overrides compress when true (default false)"
+  },
+  "video_url": {
+    "type": "string",
+    "description": "type=video: URL of the video (mp4/mkv/avi, fetched server-side)"
+  },
+  "gif_playback": {
+    "type": "boolean",
+    "description": "type=video: play as looping GIF (default false)"
+  },
+  "audio_url": {
+    "type": "string",
+    "description": "type=audio: URL of the audio file (fetched server-side)"
+  },
+  "ptt": {
+    "type": "boolean",
+    "description": "type=audio: send as voice note (requires ffmpeg server-side, default false)"
+  },
+  "file_url": {
+    "type": "string",
+    "description": "type=document: URL of the file; MIME type and filename derived server-side"
+  },
+  "sticker_url": {
+    "type": "string",
+    "description": "type=sticker: URL of an image to convert to a WebP sticker"
+  },
+  "latitude": {
+    "type": "string",
+    "description": "type=location: latitude as string"
+  },
+  "longitude": {
+    "type": "string",
+    "description": "type=location: longitude as string"
+  },
+  "contact_name": {
+    "type": "string",
+    "description": "type=contact: contact display name"
+  },
+  "contact_phone": {
+    "type": "string",
+    "description": "type=contact: contact phone number"
+  },
+  "question": {
+    "type": "string",
+    "description": "type=poll: the poll question"
+  },
+  "options": {
+    "type": "array",
+    "items": {
+      "type": "string"
     },
-    "device_id": {
-      "type": "string",
-      "description": "Act as this device instead of the connection default (X-Device-Id header)"
-    },
-    "is_forwarded": {
-      "type": "boolean",
-      "description": "Mark the message as forwarded (default false)"
-    },
-    "message": {
-      "type": "string",
-      "description": "type=text: the text body"
-    },
-    "reply_message_id": {
-      "type": "string",
-      "description": "type=text: message ID to reply to"
-    },
-    "mentions": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "type=text: ghost mentions; \"@everyone\" mentions all group participants"
-    },
-    "image_url": {
-      "type": "string",
-      "description": "type=image: URL of the image (fetched server-side)"
-    },
-    "caption": {
-      "type": "string",
-      "description": "image/video/document/link: caption text"
-    },
-    "view_once": {
-      "type": "boolean",
-      "description": "image/video: view-once message (default false)"
-    },
-    "compress": {
-      "type": "boolean",
-      "description": "image (default true) / video (default false): re-encode before sending"
-    },
-    "hd": {
-      "type": "boolean",
-      "description": "image/video: send HD without upscaling (image: 2560px max edge; video: H.264 8-bit YUV 4:2:0 at CRF 23, capped at 1280x1280); overrides compress when true (default false)"
-    },
-    "video_url": {
-      "type": "string",
-      "description": "type=video: URL of the video (mp4/mkv/avi, fetched server-side)"
-    },
-    "gif_playback": {
-      "type": "boolean",
-      "description": "type=video: play as looping GIF (default false)"
-    },
-    "audio_url": {
-      "type": "string",
-      "description": "type=audio: URL of the audio file (fetched server-side)"
-    },
-    "ptt": {
-      "type": "boolean",
-      "description": "type=audio: send as voice note (requires ffmpeg server-side, default false)"
-    },
-    "file_url": {
-      "type": "string",
-      "description": "type=document: URL of the file; MIME type and filename derived server-side"
-    },
-    "sticker_url": {
-      "type": "string",
-      "description": "type=sticker: URL of an image to convert to a WebP sticker"
-    },
-    "latitude": {
-      "type": "string",
-      "description": "type=location: latitude as string"
-    },
-    "longitude": {
-      "type": "string",
-      "description": "type=location: longitude as string"
-    },
-    "contact_name": {
-      "type": "string",
-      "description": "type=contact: contact display name"
-    },
-    "contact_phone": {
-      "type": "string",
-      "description": "type=contact: contact phone number"
-    },
-    "question": {
-      "type": "string",
-      "description": "type=poll: the poll question"
-    },
-    "options": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "minItems": 2,
-      "description": "type=poll: poll options (min 2)"
-    },
-    "max_answer": {
+    "minItems": 2,
+    "description": "type=poll: poll options (min 2)"
+  },
+  "max_answer": {
+    "type": "integer",
+    "description": "type=poll: max selectable options (default 1)"
+  },
+  "link": {
+    "type": "string",
+    "description": "type=link: the URL to send"
+  },
+  "message_id": {
+    "type": "string",
+    "description": "type=forward: source message ID from chat storage"
+  },
+  "duration": {
+    "type": "integer",
+    "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)"
+  },
+  "force_reupload": {
+    "type": "boolean",
+    "description": "type=forward: re-upload media instead of reusing references (default false)"
+  },
+  "scheduled_at": {
+    "type": "string",
+    "description": "Schedule instead of sending now: RFC3339 time of the first send (must be in the future)"
+  },
+  "timezone": {
+    "type": "string",
+    "description": "IANA timezone (e.g. Asia/Jakarta); required when scheduled_at is set"
+  },
+  "recurrence": {
+    "type": "string",
+    "enum": [
+      "once",
+      "daily",
+      "weekly",
+      "monthly"
+    ],
+    "description": "Repeat pattern for a scheduled send (default once)"
+  },
+  "weekdays": {
+    "type": "array",
+    "items": {
       "type": "integer",
-      "description": "type=poll: max selectable options (default 1)"
+      "minimum": 0,
+      "maximum": 6
     },
-    "link": {
-      "type": "string",
-      "description": "type=link: the URL to send"
-    },
-    "message_id": {
-      "type": "string",
-      "description": "type=forward: source message ID from chat storage"
-    },
-    "duration": {
-      "type": "integer",
-      "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)"
-    },
-    "force_reupload": {
-      "type": "boolean",
-      "description": "type=forward: re-upload media instead of reusing references (default false)"
-    },
-    "media_id": {
-      "type": "string",
-      "minLength": 36,
-      "maxLength": 36,
-      "description": "Attachment staged by whatsapp_media; replaces the matching media URL and is scoped to this device"
-    }
+    "uniqueItems": true,
+    "description": "recurrence=weekly (required): days to send, 0=Sunday through 6=Saturday"
+  },
+  "day_of_month": {
+    "type": "integer",
+    "minimum": 1,
+    "maximum": 31,
+    "description": "recurrence=monthly (required): day to send, clamped to the month's last day"
+  },
+  "end_at": {
+    "type": "string",
+    "description": "Recurring only: RFC3339 time after which no more sends happen"
+  },
+  "occurrence_limit": {
+    "type": "integer",
+    "minimum": 1,
+    "description": "Recurring only: stop after this many sends"
+  },
+  "media_id": {
+    "type": "string",
+    "minLength": 36,
+    "maxLength": 36,
+    "description": "Attachment staged by whatsapp_media; replaces the matching media URL and is scoped to this device"
+  }
   },
   "allOf": [
     {
@@ -408,6 +451,24 @@ const sendSchema = `{
         ]
       }
     }
+  ]
+}`
+
+const scheduleSchema = `{
+  "type": "object",
+  "required": ["action"],
+  "properties": {
+    "action": {"type": "string", "enum": ["list", "get", "pause", "resume", "cancel"]},
+    "schedule_id": {"type": "string"},
+    "status": {"type": "string", "enum": ["active","running","paused","completed","failed","cancelled"], "description": "action=list: only schedules in this status"},
+    "device_id": {"type": "string"},
+    "search": {"type": "string", "description": "action=list: match recipient or message text"},
+    "message_type": {"type": "string", "enum": ["text","image","file","video","audio","sticker","contact","link","location","poll","forward"], "description": "action=list: only this kind of scheduled send (file = whatsapp_send type=document)"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "action=list: max rows (default 25)"},
+    "offset": {"type": "integer", "minimum": 0, "description": "action=list: rows to skip (default 0)"}
+  },
+  "allOf": [
+    {"if": {"properties": {"action": {"enum": ["get", "pause", "resume", "cancel"]}}}, "then": {"required": ["schedule_id"]}}
   ]
 }`
 

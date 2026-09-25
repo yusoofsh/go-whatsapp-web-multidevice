@@ -74,13 +74,13 @@ func TestMcpEndpointListsParityTools(t *testing.T) {
 	require.True(t, ok, "tools/list result: %v", listRes)
 	tools, ok := result["tools"].([]any)
 	require.True(t, ok)
-	require.Len(t, tools, 8)
+	require.Len(t, tools, 9)
 
 	names := map[string]bool{}
 	for _, tl := range tools {
 		names[tl.(map[string]any)["name"].(string)] = true
 	}
-	for _, want := range []string{"whatsapp_send", "whatsapp_message", "whatsapp_chat", "whatsapp_group", "whatsapp_app", "whatsapp_history", "whatsapp_newsletter", "whatsapp_profile"} {
+	for _, want := range []string{"whatsapp_send", "whatsapp_message", "whatsapp_chat", "whatsapp_group", "whatsapp_app", "whatsapp_history", "whatsapp_newsletter", "whatsapp_profile", "whatsapp_schedule"} {
 		assert.True(t, names[want], "missing tool %s", want)
 	}
 }

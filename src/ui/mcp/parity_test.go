@@ -217,13 +217,13 @@ func TestParitySchemasAndDispatch(t *testing.T) {
 	s := newParityTestSuite(t)
 	list := invokeData(t, s.s, s.ctx, "tools/list", map[string]any{})
 	tools := list["result"].(map[string]any)["tools"].([]any)
-	require.Len(t, tools, 10)
+	require.Len(t, tools, 11)
 	names := map[string]bool{}
 	for _, raw := range tools {
 		tool := raw.(map[string]any)
 		names[tool["name"].(string)] = true
 	}
-	for _, name := range []string{"whatsapp_send", "whatsapp_message", "whatsapp_chat", "whatsapp_group", "whatsapp_app", "whatsapp_media", "whatsapp_events", "whatsapp_history", "whatsapp_profile", "whatsapp_newsletter"} {
+	for _, name := range []string{"whatsapp_send", "whatsapp_message", "whatsapp_chat", "whatsapp_group", "whatsapp_app", "whatsapp_media", "whatsapp_events", "whatsapp_history", "whatsapp_profile", "whatsapp_newsletter", "whatsapp_schedule"} {
 		require.True(t, names[name], name)
 	}
 	s.invoke(t, "whatsapp_send", map[string]any{"type": "text", "phone": "222", "message": "fixture"})

@@ -18,6 +18,7 @@ import (
 // Deps carries the usecase instances the MCP tools call — the same instances
 // the REST handlers hold, so both surfaces share one whatsmeow session.
 type Deps struct {
+	Schedule   domainSend.IScheduleUsecase
 	Device     domainDevice.IDeviceUsecase
 	Newsletter domainNewsletter.INewsletterUsecase
 	Call       domainCall.ICallUsecase
@@ -30,7 +31,7 @@ type Deps struct {
 	Group      domainGroup.IGroupUsecase
 }
 
-// NewServer registers the five upstream tools and optional media/event tools.
+// NewServer preserves upstream scheduling and the consolidated native parity tools.
 func NewServer(deps Deps, resolver deviceResolver, options ...server.ServerOption) *server.MCPServer {
 	opts := []server.ServerOption{
 		server.WithToolCapabilities(true),
@@ -45,6 +46,7 @@ func NewServer(deps Deps, resolver deviceResolver, options ...server.ServerOptio
 	opts = append(opts, options...)
 	s := server.NewMCPServer("WhatsApp Web Multidevice MCP Server", config.AppVersion, opts...)
 	InitMcpSend(deps.Send, resolver, deps.Data).AddSendTools(s)
+	InitMcpSchedule(deps.Schedule, resolver).AddScheduleTools(s)
 	InitMcpMessage(deps.Message, resolver, deps.Data).AddMessageTools(s)
 	InitMcpChat(deps.Chat, deps.User, resolver).AddChatTools(s)
 	InitMcpGroup(deps.Group, resolver).AddGroupTools(s)

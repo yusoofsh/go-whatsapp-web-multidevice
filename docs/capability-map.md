@@ -58,4 +58,8 @@ See `composio-schema-migration.md` for exact connector changes. Existing deploym
 
 ## Reaction identity repair
 
-The existing reaction primary key omitted chat identity. An appended transactional migration preserves existing rows and adds chat JID to the key; reaction updates and incoming removal events now target the full chat/device identity. New collision and migration-preservation tests cover this correction. No historical overwritten reactions can be reconstructed from absent data.
+The existing reaction primary key omitted chat identity. A named fork migration, separate from upstream schema version numbers, preserves existing rows and adds chat JID to the key; reaction updates and incoming removal events now target the full chat/device identity. New collision and migration-preservation tests cover this correction. No historical overwritten reactions can be reconstructed from absent data.
+
+## Upstream synchronization
+
+Merged upstream `831a851e677f48e25aa671170daade586f798551` (v9.5.0 plus its subsequent whatsmeow dependency update). `whatsapp_schedule` and scheduled-send fields are retained alongside the ten parity tools. Generated schemas include the complete scheduling contract. Fork schema repairs use a named ledger and do not occupy upstream migration numbers. Staged attachments are checked against the real production validators as well as mock send dispatch. No real WhatsApp scheduling/delivery was exercised.

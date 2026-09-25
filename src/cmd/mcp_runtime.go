@@ -41,7 +41,7 @@ func loadMcpRuntimeConfig() {
 	}
 }
 func runtimeMcpDeps() uimcp.Deps {
-	return uimcp.Deps{Data: mcpData, App: appUsecase, Send: sendUsecase, Chat: chatUsecase, User: userUsecase, Message: messageUsecase, Group: groupUsecase, Device: deviceUsecase, Newsletter: newsletterUsecase, Call: callUsecase}
+	return uimcp.Deps{Data: mcpData, App: appUsecase, Send: sendUsecase, Chat: chatUsecase, User: userUsecase, Message: messageUsecase, Group: groupUsecase, Device: deviceUsecase, Newsletter: newsletterUsecase, Call: callUsecase, Schedule: scheduleUsecase}
 }
 func initializeMcpData() error {
 	if !config.McpEnabled {

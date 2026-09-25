@@ -89,8 +89,8 @@ mean that WhatsApp is paired, connected or has complete history.
 
 ## MCP feature surface
 
-The five original consolidated names remain. The native server now registers ten
-tools: those five plus media, events, history, newsletter and profile. This is feature coverage, not a claim that every upstream REST
+The five original consolidated names remain. The native server now registers eleven
+tools: the original five plus scheduling, media, events, history, newsletter and profile. This is feature coverage, not a claim that every upstream REST
 endpoint has been turned into an MCP action.
 
 ### Request older history

@@ -154,6 +154,7 @@ func restServer(_ *cobra.Command, _ []string) {
 		rest.InitRestCall(r, callUsecase)
 		rest.InitRestChat(r, chatUsecase)
 		rest.InitRestSend(r, sendUsecase)
+		rest.InitRestSchedule(r, scheduleUsecase)
 		rest.InitRestUser(r, userUsecase)
 		rest.InitRestMessage(r, messageUsecase, sendUsecase)
 		rest.InitRestGroup(r, groupUsecase)
@@ -236,6 +237,9 @@ func restServer(_ *cobra.Command, _ []string) {
 	case sig := <-sigCh:
 		logrus.Infof("Received %s — shutting down", sig)
 		stopMCP()
+		if scheduleStop != nil {
+			scheduleStop()
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := app.ShutdownWithContext(shutdownCtx); err != nil {

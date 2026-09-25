@@ -1236,6 +1236,106 @@
     },
     {
       "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Scheduled Sends"
+      },
+      "description": "List and manage scheduled WhatsApp sends. Actions: list, get, pause, resume, cancel. Only an active schedule can be paused, only a paused one resumed, and active, paused, or failed ones cancelled.",
+      "inputSchema": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "get",
+                    "pause",
+                    "resume",
+                    "cancel"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "schedule_id"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "list",
+              "get",
+              "pause",
+              "resume",
+              "cancel"
+            ],
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "limit": {
+            "description": "action=list: max rows (default 25)",
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "message_type": {
+            "description": "action=list: only this kind of scheduled send (file = whatsapp_send type=document)",
+            "enum": [
+              "text",
+              "image",
+              "file",
+              "video",
+              "audio",
+              "sticker",
+              "contact",
+              "link",
+              "location",
+              "poll",
+              "forward"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "description": "action=list: rows to skip (default 0)",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_id": {
+            "type": "string"
+          },
+          "search": {
+            "description": "action=list: match recipient or message text",
+            "type": "string"
+          },
+          "status": {
+            "description": "action=list: only schedules in this status",
+            "enum": [
+              "active",
+              "running",
+              "paused",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_schedule"
+    },
+    {
+      "annotations": {
         "destructiveHint": false,
         "idempotentHint": false,
         "openWorldHint": true,
@@ -1705,6 +1805,12 @@
             "description": "type=contact: contact phone number",
             "type": "string"
           },
+          "day_of_month": {
+            "description": "recurrence=monthly (required): day to send, clamped to the month's last day",
+            "maximum": 31,
+            "minimum": 1,
+            "type": "integer"
+          },
           "device_id": {
             "description": "Act as this device instead of the connection default (X-Device-Id header)",
             "type": "string"
@@ -1712,6 +1818,10 @@
           "duration": {
             "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)",
             "type": "integer"
+          },
+          "end_at": {
+            "description": "Recurring only: RFC3339 time after which no more sends happen",
+            "type": "string"
           },
           "file_url": {
             "description": "type=document: URL of the file; MIME type and filename derived server-side",
@@ -1760,7 +1870,7 @@
             "type": "string"
           },
           "mentions": {
-            "description": "type=text: ghost mentions; \"@everyone\" mentions all group participants",
+            "description": "text/image/video/document: ghost mentions; \"@everyone\" mentions all group participants",
             "items": {
               "type": "string"
             },
@@ -1773,6 +1883,11 @@
           "message_id": {
             "description": "type=forward: source message ID from chat storage",
             "type": "string"
+          },
+          "occurrence_limit": {
+            "description": "Recurring only: stop after this many sends",
+            "minimum": 1,
+            "type": "integer"
           },
           "options": {
             "description": "type=poll: poll options (min 2)",
@@ -1801,8 +1916,22 @@
             "description": "type=poll: the poll question",
             "type": "string"
           },
+          "recurrence": {
+            "description": "Repeat pattern for a scheduled send (default once)",
+            "enum": [
+              "once",
+              "daily",
+              "weekly",
+              "monthly"
+            ],
+            "type": "string"
+          },
           "reply_message_id": {
             "description": "type=text: message ID to reply to",
+            "type": "string"
+          },
+          "scheduled_at": {
+            "description": "Schedule instead of sending now: RFC3339 time of the first send (must be in the future)",
             "type": "string"
           },
           "status_type": {
@@ -1815,6 +1944,10 @@
           },
           "sticker_url": {
             "description": "type=sticker: URL of an image to convert to a WebP sticker",
+            "type": "string"
+          },
+          "timezone": {
+            "description": "IANA timezone (e.g. Asia/Jakarta); required when scheduled_at is set",
             "type": "string"
           },
           "type": {
@@ -1844,6 +1977,16 @@
           "view_once": {
             "description": "image/video: view-once message (default false)",
             "type": "boolean"
+          },
+          "weekdays": {
+            "description": "recurrence=weekly (required): days to send, 0=Sunday through 6=Saturday",
+            "items": {
+              "maximum": 6,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": "array",
+            "uniqueItems": true
           }
         },
         "required": [

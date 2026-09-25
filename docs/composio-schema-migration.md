@@ -16,8 +16,10 @@ Apply the following changes to the external catalog after deploying the tested i
 | `whatsapp_message` | Keep existing distinct `delete` and `revoke`; preserve `inline` download option. Correct stale descriptions: MCP-enabled downloads return private resources/bytes, not a server-local path. |
 | `whatsapp_media`, `whatsapp_events` | Preserve PR #2 additions. Register them if the existing catalog still contains only the original five tools. |
 
-Expected native catalog: **10 tools**, retaining the five original names. External toolkit slugs such as `CUSTOM_GOWA_*` are assigned by Composio, not hard-coded here. Refresh/discover the catalog using the external service's supported process after the endpoint is deployed; reconnect only when that service requires it. Do not assume publishing code refreshes a cached schema automatically.
+Expected native catalog: **11 tools**, retaining the five original names. External toolkit slugs such as `CUSTOM_GOWA_*` are assigned by Composio, not hard-coded here. Refresh/discover the catalog using the external service's supported process after the endpoint is deployed; reconnect only when that service requires it. Do not assume publishing code refreshes a cached schema automatically.
 
 Every tool continues to accept per-call `device_id` where account data is involved. Header `X-Device-Id` is the default. Native resource subscriptions remain bound to the session's default device; overrides apply to individual tool calls only. See the capability map for authentication and administrative-scope limits.
 
 For gateways that keep `structuredContent` but drop image/resource blocks, use `whatsapp_media` action `read`, same device scope, `include_data=true`. Do not label a file read or parsed merely because a resource URI was returned.
+
+Upstream v9.5.0 also adds `whatsapp_schedule`. Register its complete generated input schema and description from `mcp-tools.json`, and retain all upstream scheduling fields on `whatsapp_send` (including `scheduled_at`, `timezone`, recurrence and bounds). The final catalog has eleven tools.

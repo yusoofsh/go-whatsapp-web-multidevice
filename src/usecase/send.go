@@ -94,6 +94,24 @@ func buildHDVideoFFmpegArgs(inputPath, outputPath string) []string {
 	}
 }
 
+// buildStickerWebPFFmpegArgs converts a single still PNG into a static WebP sticker.
+// It must not pass -vsync: ffmpeg deprecated it in 5.1 and removed it in 9.0, and
+// frame-rate sync does nothing for a one-frame input anyway.
+func buildStickerWebPFFmpegArgs(inputPath, outputPath string) []string {
+	return []string{
+		"-y",
+		"-i", inputPath,
+		"-vcodec", "libwebp",
+		"-lossless", "0",
+		"-compression_level", "6",
+		"-q:v", "60",
+		"-preset", "default",
+		"-loop", "0",
+		"-an",
+		outputPath,
+	}
+}
+
 func buildVideoTranscodeArgs(inputPath, outputPath string, compress, hd bool) ([]string, bool) {
 	if hd {
 		return buildHDVideoFFmpegArgs(inputPath, outputPath), true
@@ -190,10 +208,7 @@ func (service serviceSend) wrapSendMessage(ctx context.Context, client *whatsmeo
 	}
 
 	// Store the sent message using chatstorage
-	senderJID := ""
-	if client.Store.ID != nil {
-		senderJID = client.Store.ID.String()
-	}
+	senderJID := whatsapp.OwnSenderJID(client)
 
 	// Store message asynchronously with timeout.
 	// Preserve device context (for device_id scoping) but detach from request cancellation.
@@ -218,6 +233,32 @@ func (service serviceSend) wrapSendMessage(ctx context.Context, client *whatsmeo
 	return ts, nil
 }
 
+// normalizeStoredSender renders a stored sender in the plain user form a quote's
+// Participant requires.
+//
+// The reader cannot trust what is persisted. Rows written before senders were
+// normalised on the way in still carry AD/device identity
+// ("628123456789:32@s.whatsapp.net"), and a device-suffixed JID matches no
+// participant of a chat, so the recipient cannot attribute the quoted message.
+// Normalising here covers those rows without a migration, and mirrors
+// RevokeMessage, which parses and LID-normalises a stored sender for the same
+// reason. A value that will not parse is passed through untouched.
+func normalizeStoredSender(ctx context.Context, sender string) string {
+	// ParseJID does not report failure on a malformed value — it appends the
+	// default server, so "not-a-jid" becomes "not-a-jid@s.whatsapp.net". Only
+	// touch a value that already carries one, so anything else survives verbatim
+	// instead of being rewritten into a different unusable form.
+	if !strings.Contains(sender, "@") {
+		return sender
+	}
+	parsed, err := utils.ParseJID(sender)
+	if err != nil {
+		logrus.Warnf("Could not parse stored sender %q for reply context: %v", sender, err)
+		return sender
+	}
+	return whatsapp.NormalizeJIDFromLID(ctx, parsed, whatsapp.ClientFromContext(ctx)).ToNonAD().String()
+}
+
 func (service serviceSend) mergeReplyContext(ctx context.Context, contextInfo *waE2E.ContextInfo, replyMessageID *string) *waE2E.ContextInfo {
 	if replyMessageID == nil || *replyMessageID == "" {
 		return contextInfo
@@ -239,7 +280,7 @@ func (service serviceSend) mergeReplyContext(ctx context.Context, contextInfo *w
 		contextInfo = &waE2E.ContextInfo{}
 	}
 	contextInfo.StanzaID = replyMessageID
-	contextInfo.Participant = proto.String(message.Sender)
+	contextInfo.Participant = proto.String(normalizeStoredSender(ctx, message.Sender))
 	contextInfo.QuotedMessage = &waE2E.Message{
 		Conversation: proto.String(message.Content),
 	}
@@ -293,19 +334,8 @@ func (service serviceSend) SendText(ctx context.Context, request domainSend.Mess
 		msg.ExtendedTextMessage.ContextInfo.Expiration = proto.Uint32(service.getDefaultEphemeralExpiration(request.BaseRequest.Phone))
 	}
 
-	// Get mentions from text (existing behavior - parses @phone from message text)
-	parsedMentions := service.getMentionFromText(ctx, request.Message)
-
-	// Add explicit mentions from request.Mentions (ghost mentions - no @ required in text)
-	if len(request.Mentions) > 0 {
-		explicitMentions := service.getMentionsFromList(ctx, request.Mentions, dataWaRecipient)
-		parsedMentions = append(parsedMentions, explicitMentions...)
-		// Deduplicate to avoid mentioning the same person twice
-		parsedMentions = utils.UniqueStrings(parsedMentions)
-	}
-
-	if len(parsedMentions) > 0 {
-		msg.ExtendedTextMessage.ContextInfo.MentionedJID = parsedMentions
+	if mentionedJIDs := service.resolveMentions(ctx, request.Message, request.Mentions, dataWaRecipient); len(mentionedJIDs) > 0 {
+		msg.ExtendedTextMessage.ContextInfo.MentionedJID = mentionedJIDs
 	}
 
 	msg.ExtendedTextMessage.ContextInfo = service.mergeReplyContext(ctx, msg.ExtendedTextMessage.ContextInfo, request.ReplyMessageID)
@@ -473,6 +503,12 @@ func (service serviceSend) SendImage(ctx context.Context, request domainSend.Ima
 		}
 		msg.ImageMessage.ContextInfo.Expiration = proto.Uint32(uint32(*request.BaseRequest.Duration))
 	}
+	if mentionedJIDs := service.resolveMentions(ctx, request.Caption, request.Mentions, dataWaRecipient); len(mentionedJIDs) > 0 {
+		if msg.ImageMessage.ContextInfo == nil {
+			msg.ImageMessage.ContextInfo = &waE2E.ContextInfo{}
+		}
+		msg.ImageMessage.ContextInfo.MentionedJID = mentionedJIDs
+	}
 	msg.ImageMessage.ContextInfo = service.mergeReplyContext(ctx, msg.ImageMessage.ContextInfo, request.ReplyMessageID)
 
 	caption := "🖼️ Image"
@@ -564,6 +600,12 @@ func (service serviceSend) SendFile(ctx context.Context, request domainSend.File
 			msg.DocumentMessage.ContextInfo = &waE2E.ContextInfo{}
 		}
 		msg.DocumentMessage.ContextInfo.Expiration = proto.Uint32(uint32(*request.BaseRequest.Duration))
+	}
+	if mentionedJIDs := service.resolveMentions(ctx, request.Caption, request.Mentions, dataWaRecipient); len(mentionedJIDs) > 0 {
+		if msg.DocumentMessage.ContextInfo == nil {
+			msg.DocumentMessage.ContextInfo = &waE2E.ContextInfo{}
+		}
+		msg.DocumentMessage.ContextInfo.MentionedJID = mentionedJIDs
 	}
 	msg.DocumentMessage.ContextInfo = service.mergeReplyContext(ctx, msg.DocumentMessage.ContextInfo, request.ReplyMessageID)
 
@@ -1018,6 +1060,12 @@ func (service serviceSend) SendVideo(ctx context.Context, request domainSend.Vid
 			msg.VideoMessage.ContextInfo = &waE2E.ContextInfo{}
 		}
 		msg.VideoMessage.ContextInfo.Expiration = proto.Uint32(uint32(*request.BaseRequest.Duration))
+	}
+	if mentionedJIDs := service.resolveMentions(ctx, request.Caption, request.Mentions, dataWaRecipient); len(mentionedJIDs) > 0 {
+		if msg.VideoMessage.ContextInfo == nil {
+			msg.VideoMessage.ContextInfo = &waE2E.ContextInfo{}
+		}
+		msg.VideoMessage.ContextInfo.MentionedJID = mentionedJIDs
 	}
 	msg.VideoMessage.ContextInfo = service.mergeReplyContext(ctx, msg.VideoMessage.ContextInfo, request.ReplyMessageID)
 
@@ -1597,6 +1645,16 @@ func (service serviceSend) getMentionFromText(ctx context.Context, messages stri
 	return result
 }
 
+// resolveMentions combines @phone mentions parsed from text with explicit (ghost)
+// mentions, deduplicated so the same person is not mentioned twice.
+func (service serviceSend) resolveMentions(ctx context.Context, text string, mentions []string, recipientJID types.JID) []string {
+	result := service.getMentionFromText(ctx, text)
+	if len(mentions) > 0 {
+		result = utils.UniqueStrings(append(result, service.getMentionsFromList(ctx, mentions, recipientJID)...))
+	}
+	return result
+}
+
 // getMentionsFromList converts a list of phone numbers to JIDs for ghost mentions
 // Special keyword "@everyone" will fetch all group participants
 func (service serviceSend) getMentionsFromList(ctx context.Context, mentions []string, recipientJID types.JID) (result []string) {
@@ -1875,7 +1933,7 @@ func (service serviceSend) SendSticker(ctx context.Context, request domainSend.S
 	// Check if ffmpeg is available
 	if _, err := exec.LookPath("ffmpeg"); err == nil {
 		// Use ffmpeg to convert to WebP with transparency support, overwrite if exists
-		convertCmd = exec.CommandContext(convCtx, "ffmpeg", "-y", "-i", pngPath, "-vcodec", "libwebp", "-lossless", "0", "-compression_level", "6", "-q:v", "60", "-preset", "default", "-loop", "0", "-an", "-vsync", "0", webpPath)
+		convertCmd = exec.CommandContext(convCtx, "ffmpeg", buildStickerWebPFFmpegArgs(pngPath, webpPath)...)
 	} else if _, err := exec.LookPath("cwebp"); err == nil {
 		// Use cwebp as fallback
 		convertCmd = exec.CommandContext(convCtx, "cwebp", "-q", "60", "-o", webpPath, pngPath)
