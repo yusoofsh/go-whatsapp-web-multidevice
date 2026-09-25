@@ -1,0 +1,150 @@
+package mcp
+
+import "encoding/json"
+
+func schemaObject(raw string) map[string]any {
+ var schema map[string]any
+ if err:=json.Unmarshal([]byte(raw),&schema);err!=nil{panic(err)}
+ return schema
+}
+func schemaJSON(schema map[string]any) json.RawMessage {raw,err:=json.Marshal(schema);if err!=nil{panic(err)};return raw}
+func schemaProperties(schema map[string]any) map[string]any{return schema["properties"].(map[string]any)}
+func schemaEnum(schema map[string]any,field string,values ...string){
+ p:=schemaProperties(schema)[field].(map[string]any)
+ current:=p["enum"].([]any)
+ for _,v:=range values{current=append(current,v)}
+ p["enum"]=current
+}
+func schemaCondition(schema map[string]any,condition,then map[string]any){
+ conditions,_:=schema["allOf"].([]any)
+ schema["allOf"]=append(conditions,map[string]any{"if":condition,"then":then})
+}
+func schemaRequires(schema map[string]any,field,value string,fields ...string){
+ schemaCondition(schema,map[string]any{"properties":map[string]any{field:map[string]any{"const":value}},"required":[]string{field}},map[string]any{"required":fields})
+}
+func stringSchema(description string)map[string]any{return map[string]any{"type":"string","minLength":1,"maxLength":256,"description":description}}
+func enumSchema(values ...string)map[string]any{return map[string]any{"type":"string","enum":values}}
+func integerSchema(min,max int)map[string]any{return map[string]any{"type":"integer","minimum":min,"maximum":max}}
+func mediaSourceSchema(urlField string)map[string]any{return map[string]any{"oneOf":[]any{
+ map[string]any{"required":[]string{urlField},"not":map[string]any{"required":[]string{"media_id"}}},
+ map[string]any{"required":[]string{"media_id"},"not":map[string]any{"required":[]string{urlField}}},
+}}}
+
+func paritySendSchema()json.RawMessage{
+ s:=schemaObject(sendSchema);p:=schemaProperties(s)
+ old:=append([]any{},p["type"].(map[string]any)["enum"].([]any)...)
+ s["required"]=[]string{"type"}
+ schemaEnum(s,"type","status","presence","chat_presence")
+ schemaCondition(s,map[string]any{"properties":map[string]any{"type":map[string]any{"enum":old}}},map[string]any{"required":[]string{"phone"}})
+ p["presence"]=enumSchema("available","unavailable")
+ p["chat_presence"]=enumSchema("start","stop")
+ p["status_type"]=enumSchema("text","image","video")
+ schemaRequires(s,"type","presence","presence")
+ schemaRequires(s,"type","chat_presence","phone","chat_presence")
+ schemaRequires(s,"type","status","status_type")
+ for _,kind:=range []string{"text","image","video"}{
+  condition:=map[string]any{"properties":map[string]any{"type":map[string]any{"const":"status"},"status_type":map[string]any{"const":kind}},"required":[]string{"type","status_type"}}
+  then:=map[string]any{"required":[]string{"message"}}
+  if kind!="text"{then=mediaSourceSchema(kind+"_url")}
+  schemaCondition(s,condition,then)
+ }
+ return schemaJSON(s)
+}
+func parityChatSchema()json.RawMessage{
+ s:=schemaObject(chatSchema);p:=schemaProperties(s)
+ schemaEnum(s,"action","pin","unpin","set_disappearing")
+ p["pinned"]=map[string]any{"type":"boolean"}
+ p["timer_seconds"]=map[string]any{"type":"integer","enum":[]int{0,86400,604800,7776000}}
+ schemaRequires(s,"action","pin","chat_jid")
+ schemaRequires(s,"action","unpin","chat_jid")
+ schemaRequires(s,"action","set_disappearing","chat_jid","timer_seconds")
+ return schemaJSON(s)
+}
+func parityGroupSchema()json.RawMessage{
+ s:=schemaObject(groupSchema);p:=schemaProperties(s)
+ schemaEnum(s,"action","get_photo","set_photo","remove_photo","export_participants")
+ p["media_id"]=stringSchema("Private image staged by whatsapp_media for the selected device")
+ p["limit"]=integerSchema(1,500);p["offset"]=integerSchema(0,100000)
+ p["inline"]=map[string]any{"type":"boolean"}
+ for _,action:=range []string{"get_photo","remove_photo","export_participants"}{schemaRequires(s,"action",action,"group_id")}
+ schemaRequires(s,"action","set_photo","group_id","media_id")
+ return schemaJSON(s)
+}
+func parityAppSchema()json.RawMessage{
+ s:=schemaObject(appSchema);p:=schemaProperties(s)
+ schemaEnum(s,"action","list_devices","add_device","remove_device","reject_call")
+ p["target_device_id"]=stringSchema("Registry slot to create or remove, separate from the per-call selected device")
+ p["caller_jid"]=stringSchema("Caller JID from an existing incoming-call event")
+ p["call_id"]=stringSchema("Call ID from an existing incoming-call event")
+ p["limit"]=integerSchema(1,100);p["offset"]=integerSchema(0,100000)
+ schemaRequires(s,"action","add_device","target_device_id")
+ schemaRequires(s,"action","remove_device","target_device_id")
+ schemaRequires(s,"action","reject_call","caller_jid","call_id")
+ return schemaJSON(s)
+}
+
+const historySchema = `{
+ "type":"object","additionalProperties":false,"required":["action"],
+ "properties":{
+  "action":{"type":"string","enum":["search_all","context","export","coverage","request_backfill"]},
+  "device_id":{"type":"string","maxLength":256},
+  "chat_jid":{"type":"string","minLength":1,"maxLength":256},
+  "message_id":{"type":"string","minLength":1,"maxLength":256},
+  "sender":{"type":"string","minLength":1,"maxLength":256},
+  "search":{"type":"string","maxLength":1024},
+  "start_time":{"type":"string","maxLength":40,"description":"Inclusive RFC3339 or YYYY-MM-DD (midnight UTC)"},
+  "end_time":{"type":"string","maxLength":40,"description":"Inclusive RFC3339 or YYYY-MM-DD (midnight UTC)"},
+  "media_only":{"type":"boolean"},
+  "media_type":{"type":"string","enum":["image","video","video_note","audio","document","sticker","call"]},
+  "message_type":{"type":"string","enum":["text","image","video","video_note","audio","document","sticker","call"]},
+  "is_from_me":{"type":"boolean"},
+  "limit":{"type":"integer","minimum":1,"maximum":500,"default":50},
+  "offset":{"type":"integer","minimum":0,"maximum":100000,"default":0},
+  "before":{"type":"integer","minimum":0,"maximum":100,"default":10},
+  "after":{"type":"integer","minimum":0,"maximum":100,"default":10},
+  "count":{"type":"integer","minimum":1,"maximum":500,"default":50},
+  "inline":{"type":"boolean","default":false}
+ },
+ "allOf":[
+  {"if":{"properties":{"action":{"const":"context"}}},"then":{"required":["chat_jid","message_id"]}},
+  {"if":{"properties":{"action":{"enum":["coverage","request_backfill"]}}},"then":{"required":["chat_jid"]}}
+ ]
+}`
+const newsletterSchema = `{
+ "type":"object","additionalProperties":false,"required":["action"],
+ "properties":{
+  "action":{"type":"string","enum":["list","get_messages","download_media","unfollow"]},
+  "device_id":{"type":"string","maxLength":256},
+  "newsletter_id":{"type":"string","minLength":1,"maxLength":256},
+  "count":{"type":"integer","minimum":1,"maximum":100,"default":50},
+  "before":{"type":"integer","minimum":0,"maximum":2147483646},
+  "server_id":{"type":"integer","minimum":1,"maximum":2147483646},
+  "limit":{"type":"integer","minimum":1,"maximum":100,"default":50},
+  "offset":{"type":"integer","minimum":0,"maximum":100000},
+  "inline":{"type":"boolean","default":true}
+ },
+ "allOf":[
+  {"if":{"properties":{"action":{"enum":["get_messages","download_media","unfollow"]}}},"then":{"required":["newsletter_id"]}},
+  {"if":{"properties":{"action":{"const":"download_media"}}},"then":{"required":["server_id"]}}
+ ]
+}`
+const profileSchema = `{
+ "type":"object","additionalProperties":false,"required":["action"],
+ "properties":{
+  "action":{"type":"string","enum":["get_profile","get_avatar","update_avatar","update_push_name","update_profile","get_privacy","get_business_profile","check_number"]},
+  "device_id":{"type":"string","maxLength":256},
+  "phone":{"type":"string","minLength":1,"maxLength":256},
+  "media_id":{"type":"string","minLength":36,"maxLength":36},
+  "push_name":{"type":"string","minLength":1,"maxLength":100},
+  "is_preview":{"type":"boolean"},"is_community":{"type":"boolean"}
+ },
+ "allOf":[
+  {"if":{"properties":{"action":{"const":"update_avatar"}}},"then":{"required":["media_id"]}},
+  {"if":{"properties":{"action":{"const":"update_push_name"}}},"then":{"required":["push_name"]}},
+  {"if":{"properties":{"action":{"const":"check_number"}}},"then":{"required":["phone"]}},
+  {"if":{"properties":{"action":{"const":"update_profile"}}},"then":{"oneOf":[
+   {"required":["push_name"],"not":{"required":["media_id"]}},
+   {"required":["media_id"],"not":{"required":["push_name"]}}
+  ]}}
+ ]
+}`
