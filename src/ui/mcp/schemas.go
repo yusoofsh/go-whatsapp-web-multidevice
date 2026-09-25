@@ -6,89 +6,589 @@ package mcp
 
 const sendSchema = `{
   "type": "object",
-  "required": ["type", "phone"],
+  "required": [
+    "type",
+    "phone"
+  ],
   "properties": {
-    "type": {"type": "string", "enum": ["text","image","video","audio","document","sticker","location","contact","poll","link","forward"], "description": "Kind of message to send"},
-    "phone": {"type": "string", "description": "Destination phone number or group JID"},
-    "device_id": {"type": "string", "description": "Act as this device instead of the connection default (X-Device-Id header)"},
-    "is_forwarded": {"type": "boolean", "description": "Mark the message as forwarded (default false)"},
-    "message": {"type": "string", "description": "type=text: the text body"},
-    "reply_message_id": {"type": "string", "description": "type=text: message ID to reply to"},
-    "mentions": {"type": "array", "items": {"type": "string"}, "description": "type=text: ghost mentions; \"@everyone\" mentions all group participants"},
-    "image_url": {"type": "string", "description": "type=image: URL of the image (fetched server-side)"},
-    "caption": {"type": "string", "description": "image/video/document/link: caption text"},
-    "view_once": {"type": "boolean", "description": "image/video: view-once message (default false)"},
-    "compress": {"type": "boolean", "description": "image (default true) / video (default false): re-encode before sending"},
-    "hd": {"type": "boolean", "description": "image/video: send HD without upscaling (image: 2560px max edge; video: H.264 8-bit YUV 4:2:0 at CRF 23, capped at 1280x1280); overrides compress when true (default false)"},
-    "video_url": {"type": "string", "description": "type=video: URL of the video (mp4/mkv/avi, fetched server-side)"},
-    "gif_playback": {"type": "boolean", "description": "type=video: play as looping GIF (default false)"},
-    "audio_url": {"type": "string", "description": "type=audio: URL of the audio file (fetched server-side)"},
-    "ptt": {"type": "boolean", "description": "type=audio: send as voice note (requires ffmpeg server-side, default false)"},
-    "file_url": {"type": "string", "description": "type=document: URL of the file; MIME type and filename derived server-side"},
-    "sticker_url": {"type": "string", "description": "type=sticker: URL of an image to convert to a WebP sticker"},
-    "latitude": {"type": "string", "description": "type=location: latitude as string"},
-    "longitude": {"type": "string", "description": "type=location: longitude as string"},
-    "contact_name": {"type": "string", "description": "type=contact: contact display name"},
-    "contact_phone": {"type": "string", "description": "type=contact: contact phone number"},
-    "question": {"type": "string", "description": "type=poll: the poll question"},
-    "options": {"type": "array", "items": {"type": "string"}, "minItems": 2, "description": "type=poll: poll options (min 2)"},
-    "max_answer": {"type": "integer", "description": "type=poll: max selectable options (default 1)"},
-    "link": {"type": "string", "description": "type=link: the URL to send"},
-    "message_id": {"type": "string", "description": "type=forward: source message ID from chat storage"},
-    "duration": {"type": "integer", "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)"},
-    "force_reupload": {"type": "boolean", "description": "type=forward: re-upload media instead of reusing references (default false)"}
+    "type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "video",
+        "audio",
+        "document",
+        "sticker",
+        "location",
+        "contact",
+        "poll",
+        "link",
+        "forward"
+      ],
+      "description": "Kind of message to send"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Destination phone number or group JID"
+    },
+    "device_id": {
+      "type": "string",
+      "description": "Act as this device instead of the connection default (X-Device-Id header)"
+    },
+    "is_forwarded": {
+      "type": "boolean",
+      "description": "Mark the message as forwarded (default false)"
+    },
+    "message": {
+      "type": "string",
+      "description": "type=text: the text body"
+    },
+    "reply_message_id": {
+      "type": "string",
+      "description": "type=text: message ID to reply to"
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "type=text: ghost mentions; \"@everyone\" mentions all group participants"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "type=image: URL of the image (fetched server-side)"
+    },
+    "caption": {
+      "type": "string",
+      "description": "image/video/document/link: caption text"
+    },
+    "view_once": {
+      "type": "boolean",
+      "description": "image/video: view-once message (default false)"
+    },
+    "compress": {
+      "type": "boolean",
+      "description": "image (default true) / video (default false): re-encode before sending"
+    },
+    "hd": {
+      "type": "boolean",
+      "description": "image/video: send HD without upscaling (image: 2560px max edge; video: H.264 8-bit YUV 4:2:0 at CRF 23, capped at 1280x1280); overrides compress when true (default false)"
+    },
+    "video_url": {
+      "type": "string",
+      "description": "type=video: URL of the video (mp4/mkv/avi, fetched server-side)"
+    },
+    "gif_playback": {
+      "type": "boolean",
+      "description": "type=video: play as looping GIF (default false)"
+    },
+    "audio_url": {
+      "type": "string",
+      "description": "type=audio: URL of the audio file (fetched server-side)"
+    },
+    "ptt": {
+      "type": "boolean",
+      "description": "type=audio: send as voice note (requires ffmpeg server-side, default false)"
+    },
+    "file_url": {
+      "type": "string",
+      "description": "type=document: URL of the file; MIME type and filename derived server-side"
+    },
+    "sticker_url": {
+      "type": "string",
+      "description": "type=sticker: URL of an image to convert to a WebP sticker"
+    },
+    "latitude": {
+      "type": "string",
+      "description": "type=location: latitude as string"
+    },
+    "longitude": {
+      "type": "string",
+      "description": "type=location: longitude as string"
+    },
+    "contact_name": {
+      "type": "string",
+      "description": "type=contact: contact display name"
+    },
+    "contact_phone": {
+      "type": "string",
+      "description": "type=contact: contact phone number"
+    },
+    "question": {
+      "type": "string",
+      "description": "type=poll: the poll question"
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "description": "type=poll: poll options (min 2)"
+    },
+    "max_answer": {
+      "type": "integer",
+      "description": "type=poll: max selectable options (default 1)"
+    },
+    "link": {
+      "type": "string",
+      "description": "type=link: the URL to send"
+    },
+    "message_id": {
+      "type": "string",
+      "description": "type=forward: source message ID from chat storage"
+    },
+    "duration": {
+      "type": "integer",
+      "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)"
+    },
+    "force_reupload": {
+      "type": "boolean",
+      "description": "type=forward: re-upload media instead of reusing references (default false)"
+    },
+    "media_id": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "description": "Attachment staged by whatsapp_media; replaces the matching media URL and is scoped to this device"
+    }
   },
   "allOf": [
-    {"if": {"properties": {"type": {"const": "text"}}},     "then": {"required": ["message"]}},
-    {"if": {"properties": {"type": {"const": "image"}}},    "then": {"required": ["image_url"]}},
-    {"if": {"properties": {"type": {"const": "video"}}},    "then": {"required": ["video_url"]}},
-    {"if": {"properties": {"type": {"const": "audio"}}},    "then": {"required": ["audio_url"]}},
-    {"if": {"properties": {"type": {"const": "document"}}}, "then": {"required": ["file_url"]}},
-    {"if": {"properties": {"type": {"const": "sticker"}}},  "then": {"required": ["sticker_url"]}},
-    {"if": {"properties": {"type": {"const": "location"}}}, "then": {"required": ["latitude", "longitude"]}},
-    {"if": {"properties": {"type": {"const": "contact"}}},  "then": {"required": ["contact_name", "contact_phone"]}},
-    {"if": {"properties": {"type": {"const": "poll"}}},     "then": {"required": ["question", "options"]}},
-    {"if": {"properties": {"type": {"const": "link"}}},     "then": {"required": ["link", "caption"]}},
-    {"if": {"properties": {"type": {"const": "forward"}}},  "then": {"required": ["message_id"]}}
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "text"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "message"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "image"
+          }
+        }
+      },
+      "then": {
+        "oneOf": [
+          {
+            "required": [
+              "image_url"
+            ],
+            "not": {
+              "required": [
+                "media_id"
+              ]
+            }
+          },
+          {
+            "required": [
+              "media_id"
+            ],
+            "not": {
+              "required": [
+                "image_url"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "video"
+          }
+        }
+      },
+      "then": {
+        "oneOf": [
+          {
+            "required": [
+              "video_url"
+            ],
+            "not": {
+              "required": [
+                "media_id"
+              ]
+            }
+          },
+          {
+            "required": [
+              "media_id"
+            ],
+            "not": {
+              "required": [
+                "video_url"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "audio"
+          }
+        }
+      },
+      "then": {
+        "oneOf": [
+          {
+            "required": [
+              "audio_url"
+            ],
+            "not": {
+              "required": [
+                "media_id"
+              ]
+            }
+          },
+          {
+            "required": [
+              "media_id"
+            ],
+            "not": {
+              "required": [
+                "audio_url"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "document"
+          }
+        }
+      },
+      "then": {
+        "oneOf": [
+          {
+            "required": [
+              "file_url"
+            ],
+            "not": {
+              "required": [
+                "media_id"
+              ]
+            }
+          },
+          {
+            "required": [
+              "media_id"
+            ],
+            "not": {
+              "required": [
+                "file_url"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "sticker"
+          }
+        }
+      },
+      "then": {
+        "oneOf": [
+          {
+            "required": [
+              "sticker_url"
+            ],
+            "not": {
+              "required": [
+                "media_id"
+              ]
+            }
+          },
+          {
+            "required": [
+              "media_id"
+            ],
+            "not": {
+              "required": [
+                "sticker_url"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "location"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "latitude",
+          "longitude"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "contact"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "contact_name",
+          "contact_phone"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "poll"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "question",
+          "options"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "link"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "link",
+          "caption"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "forward"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "message_id"
+        ]
+      }
+    }
   ]
 }`
 
 const messageSchema = `{
   "type": "object",
-  "required": ["action", "phone", "message_id"],
+  "required": [
+    "action",
+    "phone",
+    "message_id"
+  ],
   "properties": {
-    "action": {"type": "string", "enum": ["react","edit","revoke","delete","mark_read","mark_played","star","unstar","download_media"], "description": "Operation on an existing message. revoke = delete for everyone (destructive); delete = delete for me only; mark_played sends the played receipt for an incoming audio message; download_media returns the local file path"},
-    "phone": {"type": "string", "description": "Phone number or group JID of the chat containing the message"},
-    "message_id": {"type": "string", "description": "The WhatsApp message ID"},
-    "device_id": {"type": "string", "description": "Act as this device instead of the connection default"},
-    "emoji": {"type": "string", "description": "action=react: emoji to react with; empty string removes the reaction"},
-    "message": {"type": "string", "description": "action=edit: replacement text (works ~15 minutes after send)"}
+    "action": {
+      "type": "string",
+      "enum": [
+        "react",
+        "edit",
+        "revoke",
+        "delete",
+        "mark_read",
+        "mark_played",
+        "star",
+        "unstar",
+        "download_media"
+      ],
+      "description": "Operation on an existing message. revoke = delete for everyone (destructive); delete = delete for me only; mark_played sends the played receipt for an incoming audio message; download_media returns the local file path"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Phone number or group JID of the chat containing the message"
+    },
+    "message_id": {
+      "type": "string",
+      "description": "The WhatsApp message ID"
+    },
+    "device_id": {
+      "type": "string",
+      "description": "Act as this device instead of the connection default"
+    },
+    "emoji": {
+      "type": "string",
+      "description": "action=react: emoji to react with; empty string removes the reaction"
+    },
+    "message": {
+      "type": "string",
+      "description": "action=edit: replacement text (works ~15 minutes after send)"
+    },
+    "inline": {
+      "type": "boolean",
+      "description": "download_media: embed image or binary MCP content (default true); false returns a private MCP resource URI"
+    }
   },
   "allOf": [
-    {"if": {"properties": {"action": {"const": "edit"}}}, "then": {"required": ["message"]}}
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "edit"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "message"
+        ]
+      }
+    }
   ]
 }`
 
 const chatSchema = `{
   "type": "object",
-  "required": ["action"],
+  "required": [
+    "action"
+  ],
   "properties": {
-    "action": {"type": "string", "enum": ["list_chats","list_contacts","get_messages","archive"], "description": "Chat/contact query or archive toggle"},
-    "device_id": {"type": "string", "description": "Act as this device instead of the connection default"},
-    "chat_jid": {"type": "string", "description": "get_messages/archive: chat JID (e.g. 628@s.whatsapp.net or group@g.us)"},
-    "limit": {"type": "integer", "description": "list_chats (default 25) / get_messages (default 50): max rows"},
-    "offset": {"type": "integer", "description": "list_chats/get_messages: rows to skip (default 0)"},
-    "search": {"type": "string", "description": "list_chats: filter by chat name; get_messages: full-text search"},
-    "has_media": {"type": "boolean", "description": "list_chats: only chats containing media"},
-    "start_time": {"type": "string", "description": "get_messages: only messages after this RFC3339 timestamp"},
-    "end_time": {"type": "string", "description": "get_messages: only messages before this RFC3339 timestamp"},
-    "media_only": {"type": "boolean", "description": "get_messages: only media messages"},
-    "is_from_me": {"type": "boolean", "description": "get_messages: filter by sender (true = sent by me)"},
-    "archived": {"type": "boolean", "description": "archive: true to archive, false to unarchive"}
+    "action": {
+      "type": "string",
+      "enum": [
+        "list_chats",
+        "list_contacts",
+        "get_messages",
+        "archive",
+        "request_history"
+      ],
+      "description": "Chat/contact query or archive toggle"
+    },
+    "device_id": {
+      "type": "string",
+      "description": "Act as this device instead of the connection default"
+    },
+    "chat_jid": {
+      "type": "string",
+      "description": "get_messages/archive: chat JID (e.g. 628@s.whatsapp.net or group@g.us)"
+    },
+    "limit": {
+      "type": "integer",
+      "description": "list_chats (default 25) / get_messages (default 50): max rows"
+    },
+    "offset": {
+      "type": "integer",
+      "description": "list_chats/get_messages: rows to skip (default 0)"
+    },
+    "search": {
+      "type": "string",
+      "description": "list_chats: filter by chat name; get_messages: full-text search"
+    },
+    "has_media": {
+      "type": "boolean",
+      "description": "list_chats: only chats containing media"
+    },
+    "start_time": {
+      "type": "string",
+      "description": "get_messages: only messages after this RFC3339 timestamp"
+    },
+    "end_time": {
+      "type": "string",
+      "description": "get_messages: only messages before this RFC3339 timestamp"
+    },
+    "media_only": {
+      "type": "boolean",
+      "description": "get_messages: only media messages"
+    },
+    "is_from_me": {
+      "type": "boolean",
+      "description": "get_messages: filter by sender (true = sent by me)"
+    },
+    "archived": {
+      "type": "boolean",
+      "description": "archive: true to archive, false to unarchive"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "description": "request_history: older messages to request (default 50); asynchronous and best effort"
+    }
   },
   "allOf": [
-    {"if": {"properties": {"action": {"const": "get_messages"}}}, "then": {"required": ["chat_jid"]}},
-    {"if": {"properties": {"action": {"const": "archive"}}},      "then": {"required": ["chat_jid", "archived"]}}
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "get_messages"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "chat_jid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "archive"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "chat_jid",
+          "archived"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "request_history"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "chat_jid"
+        ]
+      }
+    }
   ]
 }`
 
