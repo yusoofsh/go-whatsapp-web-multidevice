@@ -1,7 +1,7 @@
 name: MCP validation
 on:
   pull_request:
-    paths: ["src/**", "docker/**", ".github/workflows/mcp-*.yml"]
+    paths: ['src/**', 'docker/**', 'docs/mcp-tools.json', '.github/workflows/mcp-*.yml']
   workflow_call:
 permissions:
   contents: read
@@ -16,8 +16,8 @@ jobs:
       run:
         working-directory: src
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version: 1.26.8
           cache-dependency-path: src/go.sum
@@ -25,7 +25,22 @@ jobs:
         run: go test -count=1 -timeout 10m ./...
       - name: Vet
         run: go vet ./...
-      - name: MCP race tests
-        run: go test -race -count=1 -timeout 5m ./ui/mcp/... ./infrastructure/mcpstore
+      - name: MCP and archive race tests
+        run: go test -race -count=1 -timeout 5m ./ui/mcp/... ./infrastructure/mcpstore ./infrastructure/chatstorage
       - name: Build native application
         run: go build -trimpath -o /tmp/gowa .
+      - name: Verify documented schemas match compiled tools
+        run: |
+          set -euo pipefail
+          schema_file="$(mktemp)"
+          GOWA_SCHEMA_EXPORT="$schema_file" go test -count=1 -run '^TestExportParitySchemas$' ./ui/mcp
+          python3 - "$schema_file" <<'PY'
+          import json,sys
+          def tools(path):
+              with open(path) as source:
+                  return {item['name']: item for item in json.load(source)['tools']}
+          actual=tools(sys.argv[1])
+          expected=tools('../docs/mcp-tools.json')
+          assert actual == expected, 'Committed MCP schema catalog differs from the compiled server'
+          print(f'Verified {len(actual)} documented MCP tool schemas')
+          PY

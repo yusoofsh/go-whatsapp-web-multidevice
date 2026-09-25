@@ -1,230 +1,119 @@
-# Native GOWA MCP: history, attachments and realtime events
+# Native GoWA MCP on main
 
-This branch extends the **Go/Whatsmeow GOWA v9.4.0 baseline**. It preserves the
-existing REST API, OAuth login, UI and WhatsApp engine. It is **not** the
-TypeScript/Baileys Cloudflare Workers experiment. The original `main` and
-`feat/cloudflare-workers` branches are not changed by this feature.
+This fork's `main` contains the native Go/Whatsmeow MCP enhancements and the upstream v9.5.0 changes, including scheduling and upstream commit `831a851e677f48e25aa671170daade586f798551`. It is not the separate TypeScript/Baileys Cloudflare Workers experiment. PR #2 has been merged; subsequent capability-parity work is on `main`.
 
-## Container image
+The authoritative action inventory is [capability-map.md](capability-map.md). Exact compiled tool schemas are exported to [mcp-tools.json](mcp-tools.json), with external connector instructions in [composio-schema-migration.md](composio-schema-migration.md).
 
-GitHub Actions runs all Go tests, vet and MCP/store race tests before building
-native Linux amd64 and arm64 images. Each architecture is pulled and exercised
-with an OAuth + MCP HTTP smoke test. Only after both pass does the workflow
-publish the combined manifest:
+## Container images and validation
 
 ```text
-ghcr.io/yusoofsh/go-whatsapp-web-multidevice:mcp-parity
+ghcr.io/yusoofsh/go-whatsapp-web-multidevice:latest
 ghcr.io/yusoofsh/go-whatsapp-web-multidevice:mcp
+ghcr.io/yusoofsh/go-whatsapp-web-multidevice:mcp-parity
 ghcr.io/yusoofsh/go-whatsapp-web-multidevice:sha-<full-commit-sha>
 ```
 
-The branch tags move; pin an immutable commit tag or manifest digest in a
-production deployment. `latest` is reserved for a build from `main`; this
-feature branch does not replace it. First-time GHCR packages can be private.
-If anonymous pulls are denied, authenticate with `docker login ghcr.io` using a
-GitHub credential with package-read access, or change the package visibility
-explicitly in GitHub package settings. No registry credentials go in Compose.
+`latest`, `mcp` and `mcp-parity` now follow successful **main** builds; the old feature branch no longer moves these aliases. Prefer a manifest digest for immutable deployment. GitHub Actions runs the full Go suite, vet, MCP/archive race checks, a native build and a semantic check that the documented tool schemas match the compiled server. It then builds and pulls Linux amd64 and ARM64 images and tests each on its native runner with a fresh OAuth/MCP HTTP handshake. Shared tags are published only after both architecture checks pass.
 
-The workflow uses the job-scoped `GITHUB_TOKEN` with `packages: write`. It does
-not require a PAT or Docker Hub secret. Actions are pinned to commit SHAs.
+The publish job additionally uses an **anonymous** GHCR token to verify the index, both architecture manifests and image-config revision labels. It does not use the Actions credential for this public-access check. Publication uses the job-scoped `GITHUB_TOKEN` with `packages:write`, not a PAT or Docker Hub secret. Actions are pinned to commits. Registry publication does not deploy a running WhatsApp instance.
 
 ## Deploy
 
-Check out this branch, then:
-
 ```bash
+git clone --branch main https://github.com/yusoofsh/go-whatsapp-web-multidevice.git
+cd go-whatsapp-web-multidevice
 cp docker/mcp.env.example docker/mcp.env
-# Edit docker/mcp.env: set APP_BASIC_AUTH and your public HTTPS origin.
+# Edit docker/mcp.env: set APP_BASIC_AUTH and GOWA_PUBLIC_URL.
 docker compose --env-file docker/mcp.env -f docker/compose.mcp.yml pull
 docker compose --env-file docker/mcp.env -f docker/compose.mcp.yml up -d
 ```
 
-Use a strong unique password. The inherited Basic Auth parser expects exactly
-`username:password`; choose a password without `:`. Keep the real env file out
-of version control. The supplied example contains no production credential.
+Use a long unique password without `:` because the inherited Basic Auth parser expects `username:password`. Keep the real env file out of Git. Set `GOWA_PUBLIC_URL` to your public HTTPS origin without a trailing slash. The example Compose file enables OAuth and streaming and persists `/app/storages` and `/app/statics` in named volumes. Back up existing volumes before changing images; do not run two processes against one WhatsApp session/SQLite database.
 
-Forward the public HTTPS hostname to **127.0.0.1:3001**, not port 3000. The native
-HTTP gateway handles `/mcp` directly and proxies OAuth discovery/login/token,
-REST and UI requests to the existing internal Fiber listener. Thus one hostname
-serves the complete connector flow:
+Point the HTTPS reverse proxy to **port 3001**, not 3000:
 
 ```text
 MCP client -> HTTPS reverse proxy -> native gateway :3001
                                      |-- /mcp: stateful Streamable HTTP
-                                     `-- OAuth, REST, UI -> Fiber :3000
+                                     `-- OAuth, REST, UI -> internal Fiber :3000
 ```
 
-The Compose file publishes only the loopback gateway port. Do not make port
-3000 public merely to enable streaming. For a containerized reverse proxy,
-connect it on a private Docker network and target `gowa:3001` instead.
-Disable reverse-proxy response buffering for `/mcp` and allow streaming GET
-requests. Do not place an interactive bot challenge or unrelated login in front
-of OAuth metadata or the MCP endpoint. Terminate TLS at the reverse proxy.
+Compose publishes only `127.0.0.1:3001`. A containerized reverse proxy should use a private Docker network and target `gowa:3001`. Disable proxy buffering for `/mcp` and allow streaming GET requests. Do not expose port 3000 simply to enable streaming. Do not put an interactive bot challenge or another login in front of OAuth metadata or the MCP endpoint. Terminate TLS at the reverse proxy and rate-limit failed owner logins there.
 
-Open the UI and pair a WhatsApp linked device normally. Add the public
-`https://<host>/mcp` endpoint to an OAuth-capable MCP client. OAuth remains the
-existing GOWA implementation with S256 PKCE, dynamic registration, resource-bound
-access tokens and rotating refresh tokens; no extra identity provider is needed.
+Open the UI and pair normally when you are ready for live acceptance. The connector URL is `https://<host>/mcp`. Existing OAuth includes S256 PKCE, dynamic registration, resource-bound access tokens and rotating refresh tokens; no extra identity provider is required. See [mcp-oauth.md](mcp-oauth.md) for base-path configuration.
 
 ### Configuration
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `MCP_ENABLED` | `true` | Enables the MCP tools and private data store. |
-| `MCP_STREAMING_ENABLED` | `false` in normal GOWA; `true` in the MCP image | Enables the native HTTP gateway. |
-| `MCP_STREAM_PORT` | `3001` | Gateway listener; must differ from `APP_PORT`. |
-| `MCP_DATA_DIR` | `storages/mcp` | Private event/attachment database and temporary downloads. |
-| `MCP_OAUTH_ENABLED` | `false`; enabled by Compose | OAuth discovery and authentication. |
-| `MCP_OAUTH_ISSUER_URL` | Required for OAuth | Public HTTPS issuer, not an internal container URL. |
-| `MCP_OAUTH_RESOURCE_URL` | Derived from issuer/base path | Canonical public MCP endpoint. |
+| Variable | Default / purpose |
+|---|---|
+| `MCP_ENABLED` | `true`; native tools and private data store. |
+| `MCP_STREAMING_ENABLED` | `false` in ordinary GoWA; `true` in this MCP image. |
+| `MCP_STREAM_PORT` | `3001`; must differ from `APP_PORT`. |
+| `MCP_DATA_DIR` | `storages/mcp`; private event/attachment storage. |
+| `MCP_OAUTH_ENABLED` | `false` ordinarily; enabled by Compose. |
+| `MCP_OAUTH_ISSUER_URL` | Public HTTPS issuer; supplied from `GOWA_PUBLIC_URL` by Compose. |
+| `MCP_OAUTH_RESOURCE_URL` | Canonical public `/mcp` endpoint; derived unless explicitly set. |
 
-Existing CLI flags override their corresponding environment values. `APP_BASE_PATH`
-continues to apply; set the issuer/resource paths accordingly as described in
-[mcp-oauth.md](mcp-oauth.md). For Basic-only remote clients, explicitly configure
-allowed public origins through `APP_CORS_ALLOWED_ORIGINS`; wildcard origins are
-not accepted by the native gateway.
+CLI flags override environment configuration. `APP_BASE_PATH` still applies. For Basic-only clients, configure exact public origins through `APP_CORS_ALLOWED_ORIGINS`; the native gateway does not accept wildcard origins. `/healthz` is process/transport liveness only, not proof of WhatsApp pairing, connectivity or complete history.
 
-`/healthz` is a process/transport liveness check only. A healthy result does not
-mean that WhatsApp is paired, connected or has complete history.
+## Eleven consolidated tools
 
-## MCP feature surface
+The original names `whatsapp_send`, `whatsapp_message`, `whatsapp_chat`, `whatsapp_group` and `whatsapp_app` remain. The catalog also contains upstream `whatsapp_schedule`, plus `whatsapp_media`, `whatsapp_events`, `whatsapp_history`, `whatsapp_newsletter` and `whatsapp_profile`.
 
-The five original consolidated names remain. The native server now registers eleven
-tools: the original five plus scheduling, media, events, history, newsletter and profile. This is feature coverage, not a claim that every upstream REST
-endpoint has been turned into an MCP action.
+Existing per-chat `get_messages` remains available. On SQLite, its search now combines date, media, direction and offset filters rather than bypassing them. Message delete-for-me and revoke-for-everyone remain distinct. New profile and newsletter actions expose existing GoWA usecases; unsupported writes are explicitly listed in the capability map. Presence actions operate immediately; scheduling support belongs to message sends and the upstream scheduling tool.
 
-### Request older history
+### Archive workflows
 
-```json
-{"name":"whatsapp_chat","arguments":{"action":"request_history","chat_jid":"628123456789@s.whatsapp.net","count":50}}
-```
+`whatsapp_history` provides `search_all`, `context`, `export`, `coverage`, and `request_backfill`. It reuses the existing message table and indexes, not a second archive database. Searches accept chat, sender, time, media, stored message-type and direction filters. Text matching is literal SQL substring matching, not WACLI FTS5 syntax. Empty stored media type maps to `text`; richer historical message types are not fabricated.
 
-`count` is 1–500. The existing usecase anchors the request at the oldest stored
-message for that chat/device, excluding synthetic call rows. `requested` means
-the request was sent, **not** that history is complete. A successful incoming
-history batch emits `history.sync`; then query `get_messages` again. A chat with
-no local anchor, disabled chat storage, or an unavailable phone cannot be
-backfilled through this call. WhatsApp controls historical availability.
+Search/export pages are 1–500 rows with offsets 0–100,000. Context windows are 0–100 rows before and after an exact chat/message identity. Time bounds are inclusive; a date-only bound means midnight UTC. Search is newest-first, export oldest-first, with stable chat/message tie breakers for equal timestamps. Pages are separate snapshots: ingestion can change later pages. Use fixed time bounds and deduplicate by chat/message ID when exporting. Narrow filters after the maximum offset.
 
-### Upload and send a file without public hosting
+Coverage reports locally stored counts, oldest/newest timestamps and a usable backfill anchor. It does **not** prove complete phone history. `request_backfill`, and the preserved `whatsapp_chat.action=request_history`, call the existing per-chat history request with count 1–500. A `requested` result means dispatched, not completed. Retrieval is asynchronous and best effort; query after a `history.sync` event. An empty chat has no anchor, and the phone/WhatsApp determines historical availability.
+
+Exports are bounded JSON files in the private attachment store. Their DTOs exclude media encryption keys, CDN access material and raw protocol data. Participant exports use the same private file mechanism. Files over 10 MiB are rejected; reduce the page limit or narrow filters.
+
+### Attachments through MCP
+
+Stage bytes without public hosting:
 
 ```json
 {"name":"whatsapp_media","arguments":{"action":"upload","filename":"report.pdf","mime_type":"application/pdf","data_base64":"JVBERi0xLjc="}}
 ```
 
-The response contains `media_id`, `uri`, size, SHA-256 and expiry. This call only
-stages data and sends nothing to WhatsApp. Use the returned ID:
+The response contains `media_id`, `uri`, byte size, SHA-256 and expiry; staging sends nothing. Send the returned `media_id` with `whatsapp_send` for documents, images, video, audio or stickers. Supply exactly one source: a staged ID or its corresponding URL. The native implementation retains upstream FFmpeg/media processing. Staged uploads are tested against the actual production validators as well as fake send clients.
+
+`whatsapp_message.action=download_media` downloads into private storage and returns metadata plus an inline image or embedded binary resource. `inline=false` omits inline bytes. Newsletter downloads follow the same private import path. Read `whatsapp://media/<id>` with `resources/read`, or use the tool fallback:
 
 ```json
-{"name":"whatsapp_send","arguments":{"type":"document","phone":"628123456789","media_id":"<returned-id>","caption":"Report"}}
+{"name":"whatsapp_media","arguments":{"action":"read","media_id":"<id>","include_data":true}}
 ```
 
-Images, video, audio and stickers also accept `media_id`. The MIME must match
-the selected send type. Supply **one** source: a staged ID or the existing media
-URL field, not both. The Go implementation retains upstream media processing
-such as FFmpeg; this is not the restricted Workers runtime.
+The fallback includes `data_base64` in structured output for gateways that discard binary blocks. A resource URI alone does not prove that a client downloaded or understood a file. Large base64 responses consume client context.
 
-Limits: 10 MiB per staged file, 24-hour expiry, 256 MiB total staged bytes and
-1,024 attachments per server. Attachments are not a permanent backup. Paths and
-control characters in filenames, active HTML/XML/SVG/script media, invalid
-base64 and oversized payloads are rejected. OOXML documents (`docx`, `xlsx`,
-`pptx`) are accepted; their MIME names are not confused with active XML.
+Limits: **10 MiB per file**, **24-hour staging expiry**, **256 MiB / 1,024 staged files globally**. Invalid base64, traversal/control characters in filenames, spoofed images, and active HTML/XML/SVG/script MIME types are rejected. OOXML documents are supported. Staging is not permanent backup storage.
 
-### Download and read bytes within MCP
+### Realtime events
 
-Use `whatsapp_message` with `action=download_media`, `phone` and `message_id`.
-With MCP data enabled, the download is imported into the private attachment
-store and its temporary copy is removed. The result returns media metadata and,
-by default, an inline image or embedded binary resource—not a local server path.
-Use `inline=false` to return metadata without inline bytes.
+Call `whatsapp_events` with a cursor and bounded limit (1–500). Persist `next_cursor` and continue while `has_more` is true. Events contain device/chat/message references, type, timestamp and journal ID—not message bodies or encryption keys.
 
-Read the returned `whatsapp://media/<media_id>` through `resources/read` to obtain
-`mimeType` and base64 `blob`. Clients that do not support resource reads can call:
+Native clients may subscribe to `whatsapp://events` using `resources/subscribe` and an authenticated GET SSE stream at `/mcp`. The server emits `notifications/resources/updated` after a journal commit. Notifications are hints; read the durable cursor stream for recovery. Current events cover messages, sent-message persistence, edits, revocations, reactions, receipts, delete-for-me, history batches, connection changes and group updates. Existing HTTP webhooks remain separate and have a broader payload surface.
 
-```json
-{"name":"whatsapp_media","arguments":{"action":"read","media_id":"<returned-id>","include_data":true}}
-```
+Retention is seven days / approximately 100,000 events. `cursor_expired` means rescan state; older events cannot be replayed. Process idempotently because protocol redelivery can repeat message references. Message storage and the event journal are not one cross-database transaction, so this is not a guaranteed lossless protocol audit feed.
 
-`include_data` explicitly includes base64 in `structuredContent` for gateways
-that discard binary content blocks. Large blobs still consume client context;
-prefer native resource/file handling when supported. A path or resource URI
-alone is not evidence that a client downloaded, parsed or understood the file.
+Native sessions are memory-resident, capped at 128 and expire after ten idle minutes. Restart requires reinitialization; journal/media data persist. SSE streams close after 55 seconds to require reauthentication. Reconnect and use the durable cursor; a separate `Last-Event-ID` replay store is not implemented. Client support is required; notifications do not automatically wake ChatGPT or start a background agent.
 
-### Events and notifications
+## Device and storage safety
 
-```json
-{"name":"whatsapp_events","arguments":{"cursor":0,"limit":100}}
-```
+Every native request, including GET, authenticates. Session IDs are not credentials. Sessions bind the authenticated principal and default `X-Device-Id`; stolen cross-principal sessions or changing a session's default header device are rejected.
 
-Persist `next_cursor`; subsequent calls return events strictly after it.
-`has_more` means request another page. Events contain only device/chat/message
-references, event type, timestamp and a monotonic journal ID. Message content
-and WhatsApp encryption keys are not stored in the event journal.
+For **individual tool calls**, explicit `device_id` overrides the header/default device without changing the session or its subscriptions. Resource reads and SSE subscriptions remain scoped to the session's default account. Read an overridden account's file with `whatsapp_media.read` and the same `device_id`, or initialize a separate session. Unpaired devices cannot read private attachments or subscribe to account events.
 
-The native endpoint advertises resource subscriptions. Subscribe to
-`whatsapp://events` using `resources/subscribe` and open an authenticated GET SSE
-stream at `/mcp`. After a journal commit, the server sends
-`notifications/resources/updated`. Read `whatsapp_events` to retrieve the actual
-entries. Notifications are hints; the persisted journal is the recovery source.
+Credentials remain administrative, not per-user account ACLs. Device list/add/remove uses explicit `target_device_id` and does not require a selected paired account. Do not share owner credentials with untrusted users.
 
-Current events include messages, sent-message persistence, edits, revocations,
-reactions, receipts, delete-for-me, successful history batches, connection state
-and group changes. They are not a complete replacement for all REST webhook
-payloads. Existing outbound webhooks remain available separately.
+Private files remain outside public `statics`, including symlink checks. Protect volumes and backups: the SQLite data is not independently encrypted at rest. The entrypoint fixes named-volume ownership and runs the app non-root. The reaction identity repair uses a separate named fork-migration ledger so future upstream numbered migrations do not collide. Its transactional table rebuild preserves existing rows; already-overwritten historical data cannot be recovered from absence.
 
-The journal retains seven days and approximately 100,000 entries. If
-`cursor_expired` is true, rescan affected chat/history state; events outside
-retention cannot be replayed. Consumers should process idempotently. Protocol
-redelivery may produce another event referencing the same message.
+## Verification limits
 
-Sessions are memory-resident, bound to authenticated principal and selected
-paired-device identity, capped at 128, and expire after ten idle minutes.
-A restart requires MCP reinitialization, but journal and attachment data persist.
-SSE streams close after 55 seconds to require reauthentication; reconnect with
-the same valid session ID and use the event cursor to recover notifications.
-This does not implement a separate `Last-Event-ID` notification replay store.
+Tests use fake WhatsApp clients and temporary databases. They cover schemas, validation, pagination, errors, device scoping, production DTO validation, archive filters/context/coverage, migration preservation, byte round-trips, and real local HTTP/SSE with synthetic events. Container checks exercise actual OAuth registration, authorization code/PKCE, tokens and authenticated MCP discovery without pairing an account.
 
-## Security and operations
-
-Authentication is checked on every native request, including GET. Session IDs
-are not credentials. Cross-principal session reuse and changing the default header device of an existing
-session are rejected. Per-call `device_id` overrides are supported for tools without
-changing the default resource/SSE subscription identity. Use a separate session
-when switching a subscription to another account. Unpaired devices cannot read attachments or subscribe to account data.
-
-The inherited GOWA credentials are administrative credentials. Device scoping
-prevents accidental cross-device data access; it does **not** create a new
-per-user account-access policy. Do not share owner credentials with untrusted
-users. Apply failed-login rate limits at the HTTPS reverse proxy.
-
-Private data must remain outside `statics`, including through symlinks. The MCP
-SQLite file is created with restricted permissions; protect the storage volume
-and backups. The database is not independently encrypted at rest. The container
-entrypoint fixes named-volume ownership, then runs the app as non-root.
-
-Use a single GOWA process for a given WhatsApp session and its SQLite volumes.
-This feature does not implement a distributed event bus or multi-replica session
-coordination. Preserve existing volumes and take a backup before switching
-images; do not copy active session databases casually between running clients.
-
-## Verification and limitations
-
-Automated tests use fake WhatsApp clients and temporary databases. They exercise
-history dispatch/validation, private binary round-trips, staged-file sends to
-stubs, device isolation, event durability/retention, authenticated real HTTP SSE,
-origin/host checks, session ownership and cancellation. Container smoke tests
-exercise the compiled image's public gateway and actual local OAuth code/PKCE/
-token flow without pairing or messaging a real account.
-
-Passing these tests is **not** live WhatsApp acceptance testing. Pairing,
-real send/receive, historical recovery, CDN media availability and long-running
-production reliability need validation with an authorized non-critical account.
-Neither this fork nor stock GOWA can guarantee complete lifetime history.
-MCP notification support depends on the client and does not automatically start
-a ChatGPT conversation or trigger a background agent.
-
-## Archive and REST capability expansion
-
-See [capability-map.md](capability-map.md) for the complete audited surface,
-[composio-schema-migration.md](composio-schema-migration.md) for external catalog
-changes, and [mcp-tools.json](mcp-tools.json) for generated exact input schemas.
+**No real WhatsApp messages were sent and no production deployment was modified.** Live phone history recovery, message/media delivery, newsletter permissions and long-running reliability still require acceptance testing. Voice/video call initiation and acceptance are intentionally absent; only rejection of an existing incoming call is exposed. The external Composio catalog is not automatically updated by a code/image publication; follow the schema migration guide after deployment.
