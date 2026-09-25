@@ -23,3 +23,13 @@ Every tool continues to accept per-call `device_id` where account data is involv
 For gateways that keep `structuredContent` but drop image/resource blocks, use `whatsapp_media` action `read`, same device scope, `include_data=true`. Do not label a file read or parsed merely because a resource URI was returned.
 
 Upstream v9.5.0 also adds `whatsapp_schedule`. Register its complete generated input schema and description from `mcp-tools.json`, and retain all upstream scheduling fields on `whatsapp_send` (including `scheduled_at`, `timezone`, recurrence and bounds). The final catalog has eleven tools.
+
+## Request-safety schema update
+
+Refresh the full `docs/mcp-tools.json` catalog after deploying the follow-up build.
+`whatsapp_send` now rejects all scheduling fields on `presence` and `chat_presence`;
+these operations are immediate-only. `whatsapp_profile` rejects `phone` on its
+three update actions; use `device_id` to select the account instead. Both the JSON
+schemas and handler validation enforce these constraints before any usecase call.
+The new group-photo/export actions normalize numeric IDs and reject non-group JIDs.
+See [request-safety details and verification boundaries](mcp-hardening.md).

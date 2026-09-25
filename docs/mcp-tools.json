@@ -363,7 +363,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Existing group actions plus get_photo, set_photo from a staged media_id, remove_photo and bounded JSON export_participants. Removing photos or members is destructive.",
+      "description": "Existing group actions plus get_photo, set_photo from a staged media_id, remove_photo and bounded JSON export_participants. Numeric group IDs are normalized to @g.us. Removing photos or members is destructive.",
       "inputSchema": {
         "allOf": [
           {
@@ -1107,7 +1107,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Get profile/avatar/business profile/privacy. Update own push name or avatar with staged media_id; update_profile accepts exactly one of those fields. Privacy and business-profile writes are unsupported. phone defaults to the selected account for reads.",
+      "description": "Get profile/avatar/business profile/privacy. Update own push name or avatar with staged media_id; update_profile accepts exactly one of those fields. Privacy and business-profile writes are unsupported. phone defaults to the selected account for reads and must be omitted for profile updates; select that account with device_id.",
       "inputSchema": {
         "additionalProperties": false,
         "allOf": [
@@ -1184,6 +1184,29 @@
                   ]
                 }
               ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "update_profile",
+                    "update_avatar",
+                    "update_push_name"
+                  ]
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "phone"
+                ]
+              }
             }
           }
         ],
@@ -1341,7 +1364,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Send text/media and existing message types. Additional types: presence (available/unavailable), chat_presence (start/stop), status (status_type text/image/video; broadcasts to the account's existing status privacy audience, not a single recipient).",
+      "description": "Send text/media and existing message types. Additional types: immediate-only presence (available/unavailable) and chat_presence (start/stop), both rejecting scheduling fields, status (status_type text/image/video; broadcasts to the account's existing status privacy audience, not a single recipient).",
       "inputSchema": {
         "allOf": [
           {
@@ -1673,6 +1696,62 @@
               "required": [
                 "status_type"
               ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "presence",
+                    "chat_presence"
+                  ]
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "scheduled_at"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "timezone"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "recurrence"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "weekdays"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "day_of_month"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "end_at"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "occurrence_limit"
+                    ]
+                  }
+                ]
+              }
             }
           },
           {

@@ -3,6 +3,7 @@ import base64
 import hashlib
 import json
 import os
+from pathlib import Path
 import secrets
 import time
 import urllib.error
@@ -74,6 +75,17 @@ tokens = json.loads(raw)
 assert tokens.get("refresh_token")
 print("PASS authorization code, PKCE and token issuance")
 
+old_refresh = tokens["refresh_token"]
+status, _, raw = request("/oauth/token", "POST", urllib.parse.urlencode({
+    "grant_type": "refresh_token", "client_id": client_id,
+    "refresh_token": old_refresh, "resource": PUBLIC + "/mcp",
+}).encode(), {"Content-Type": "application/x-www-form-urlencoded"})
+assert status == 200, "OAuth refresh failed"
+tokens = json.loads(raw)
+assert tokens.get("access_token") and tokens.get("refresh_token")
+assert tokens["refresh_token"] != old_refresh, "Refresh token did not rotate"
+print("PASS OAuth refresh-token rotation")
+
 headers = {"Authorization": "Bearer " + tokens["access_token"], "Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
 
 
@@ -87,8 +99,9 @@ def rpc(method, params):
     return result["result"], returned
 
 
-_, returned = rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}})
+initialized, returned = rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "smoke", "version": "1"}})
 headers["Mcp-Session-Id"] = returned["Mcp-Session-Id"]
+headers["MCP-Protocol-Version"] = initialized["protocolVersion"]
 status, _, _ = request("/mcp", "POST", b'{"jsonrpc":"2.0","method":"notifications/initialized"}', headers)
 assert status == 202
 result, _ = rpc("tools/list", {})
@@ -102,6 +115,18 @@ assert "whatsapp_schedule" in names
 history = next(tool for tool in result["tools"] if tool["name"] == "whatsapp_history")
 assert set(history["inputSchema"]["properties"]["action"]["enum"]) == {"search_all", "context", "export", "coverage", "request_backfill"}
 print("PASS OAuth-authenticated stateful MCP and parity tool discovery")
+
+catalog_path = Path(__file__).resolve().parents[1] / "docs" / "mcp-tools.json"
+expected = {tool["name"]: tool for tool in json.loads(catalog_path.read_text())["tools"]}
+actual = {tool["name"]: tool for tool in result["tools"]}
+assert actual == expected, "Container tool catalog differs from documented schemas"
+print("PASS complete container tool-schema catalog")
+devices, _ = rpc("tools/call", {"name": "whatsapp_app", "arguments": {"action": "list_devices"}})
+assert devices.get("isError") is not True, "Device management requires an unnecessary paired device"
+page = devices["structuredContent"]
+assert isinstance(page["data"], list)
+assert all(not device.get("jid") for device in page["data"]), "Test container contains a paired account"
+print("PASS unpaired device-list workflow without WhatsApp mutations")
 status, _, _ = request("/mcp", "GET", headers={"Authorization": headers["Authorization"], "Mcp-Session-Id": "unknown", "Accept": "text/event-stream"})
 assert status == 404
 status, _, _ = request("/mcp", "POST", b"{}", {"Authorization": "Bearer invalid", "Content-Type": "application/json"})

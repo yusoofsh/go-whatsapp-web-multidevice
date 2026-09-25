@@ -45,13 +45,13 @@ func addParityTool(s *server.MCPServer, name, description string, schema json.Ra
 // action delegates to its original handler, including future upstream additions.
 func registerParityTools(s *server.MCPServer, deps Deps, resolver deviceResolver) {
 	h := &parityHandler{deps: deps, resolver: resolver}
-	addParityTool(s, "whatsapp_send", "Send text/media and existing message types. Additional types: presence (available/unavailable), chat_presence (start/stop), status (status_type text/image/video; broadcasts to the account's existing status privacy audience, not a single recipient).", paritySendSchema(), false, h.send)
+	addParityTool(s, "whatsapp_send", "Send text/media and existing message types. Additional types: immediate-only presence (available/unavailable) and chat_presence (start/stop), both rejecting scheduling fields, status (status_type text/image/video; broadcasts to the account's existing status privacy audience, not a single recipient).", paritySendSchema(), false, h.send)
 	addParityTool(s, "whatsapp_chat", "Existing per-chat queries, archive and request_history; also pin, unpin, set_disappearing (0/86400/604800/7776000 seconds). Use whatsapp_history for cross-chat archives.", parityChatSchema(), false, h.chat)
-	addParityTool(s, "whatsapp_group", "Existing group actions plus get_photo, set_photo from a staged media_id, remove_photo and bounded JSON export_participants. Removing photos or members is destructive.", parityGroupSchema(), true, h.group)
+	addParityTool(s, "whatsapp_group", "Existing group actions plus get_photo, set_photo from a staged media_id, remove_photo and bounded JSON export_participants. Numeric group IDs are normalized to @g.us. Removing photos or members is destructive.", parityGroupSchema(), true, h.group)
 	addParityTool(s, "whatsapp_app", "Existing session actions plus list_devices, add_device, remove_device using target_device_id. reject_call handles an existing incoming call only; no voice/video initiation or acceptance.", parityAppSchema(), true, h.app)
 	addParityTool(s, "whatsapp_history", "Device-scoped local archive: search_all with combined filters, chronological context, bounded JSON export, coverage and asynchronous best-effort request_backfill. Stored coverage never proves complete phone history. Text-preferring clients receive JSON results.", json.RawMessage(historySchema), false, h.history)
 	addParityTool(s, "whatsapp_newsletter", "List subscribed channels, get_messages with count/before pagination, private download_media by server_id, and unfollow. Follow/join and publishing are not exposed by the pinned GoWA REST usecase.", json.RawMessage(newsletterSchema), true, h.newsletter)
-	addParityTool(s, "whatsapp_profile", "Get profile/avatar/business profile/privacy. Update own push name or avatar with staged media_id; update_profile accepts exactly one of those fields. Privacy and business-profile writes are unsupported. phone defaults to the selected account for reads.", json.RawMessage(profileSchema), false, h.profile)
+	addParityTool(s, "whatsapp_profile", "Get profile/avatar/business profile/privacy. Update own push name or avatar with staged media_id; update_profile accepts exactly one of those fields. Privacy and business-profile writes are unsupported. phone defaults to the selected account for reads and must be omitted for profile updates; select that account with device_id.", json.RawMessage(profileSchema), false, h.profile)
 }
 
 func pageBounds(total, limit, offset int) (int, int, error) {
@@ -92,6 +92,11 @@ func (h *parityHandler) send(ctx context.Context, r mcpg.CallToolRequest) (*mcpg
 	legacy := InitMcpSend(h.deps.Send, h.resolver, h.deps.Data)
 	if kind != "presence" && kind != "chat_presence" && kind != "status" {
 		return legacy.handleSend(ctx, r)
+	}
+	if kind == "presence" || kind == "chat_presence" {
+		if err := validatePresenceSchedule(r); err != nil {
+			return parityResult(nil, err)
+		}
 	}
 	ctx, _, err := resolveDeviceContext(ctx, r, h.resolver)
 	if err != nil {
@@ -225,6 +230,10 @@ func (h *parityHandler) group(ctx context.Context, r mcpg.CallToolRequest) (*mcp
 	if err != nil {
 		return parityResult(nil, err)
 	}
+	id, err = normalizeParityGroupID(id)
+	if err != nil {
+		return parityResult(nil, err)
+	}
 	if action == "get_photo" {
 		if h.deps.User == nil {
 			return parityError("profile service unavailable")
@@ -280,6 +289,11 @@ func (h *parityHandler) profile(ctx context.Context, r mcpg.CallToolRequest) (*m
 		phone = device.JID()
 	}
 	action := r.GetString("action", "")
+	if action == "update_profile" || action == "update_avatar" || action == "update_push_name" {
+		if _, exists := r.GetArguments()["phone"]; exists {
+			return parityError("profile updates affect the selected account; omit phone and select the account with device_id")
+		}
+	}
 	if action == "update_profile" {
 		name, media := r.GetString("push_name", ""), r.GetString("media_id", "")
 		if (name == "") == (media == "") {

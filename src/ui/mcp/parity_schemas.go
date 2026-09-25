@@ -63,6 +63,14 @@ func paritySendSchema() json.RawMessage {
 	schemaRequires(s, "type", "presence", "presence")
 	schemaRequires(s, "type", "chat_presence", "phone", "chat_presence")
 	schemaRequires(s, "type", "status", "status_type")
+	scheduling := make([]any, 0, len(presenceScheduleFields))
+	for _, field := range presenceScheduleFields {
+		scheduling = append(scheduling, map[string]any{"required": []string{field}})
+	}
+	schemaCondition(s,
+		map[string]any{"properties": map[string]any{"type": map[string]any{"enum": []string{"presence", "chat_presence"}}}, "required": []string{"type"}},
+		map[string]any{"not": map[string]any{"anyOf": scheduling}},
+	)
 	for _, kind := range []string{"text", "image", "video"} {
 		condition := map[string]any{"properties": map[string]any{"type": map[string]any{"const": "status"}, "status_type": map[string]any{"const": kind}}, "required": []string{"type", "status_type"}}
 		then := map[string]any{"required": []string{"message"}}
@@ -159,22 +167,149 @@ const newsletterSchema = `{
  ]
 }`
 const profileSchema = `{
- "type":"object","additionalProperties":false,"required":["action"],
- "properties":{
-  "action":{"type":"string","enum":["get_profile","get_avatar","update_avatar","update_push_name","update_profile","get_privacy","get_business_profile","check_number"]},
-  "device_id":{"type":"string","maxLength":256},
-  "phone":{"type":"string","minLength":1,"maxLength":256},
-  "media_id":{"type":"string","minLength":36,"maxLength":36},
-  "push_name":{"type":"string","minLength":1,"maxLength":100},
-  "is_preview":{"type":"boolean"},"is_community":{"type":"boolean"}
- },
- "allOf":[
-  {"if":{"properties":{"action":{"const":"update_avatar"}}},"then":{"required":["media_id"]}},
-  {"if":{"properties":{"action":{"const":"update_push_name"}}},"then":{"required":["push_name"]}},
-  {"if":{"properties":{"action":{"const":"check_number"}}},"then":{"required":["phone"]}},
-  {"if":{"properties":{"action":{"const":"update_profile"}}},"then":{"oneOf":[
-   {"required":["push_name"],"not":{"required":["media_id"]}},
-   {"required":["media_id"],"not":{"required":["push_name"]}}
-  ]}}
- ]
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "action"
+  ],
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "get_profile",
+        "get_avatar",
+        "update_avatar",
+        "update_push_name",
+        "update_profile",
+        "get_privacy",
+        "get_business_profile",
+        "check_number"
+      ]
+    },
+    "device_id": {
+      "type": "string",
+      "maxLength": 256
+    },
+    "phone": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "media_id": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36
+    },
+    "push_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "is_preview": {
+      "type": "boolean"
+    },
+    "is_community": {
+      "type": "boolean"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "update_avatar"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "media_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "update_push_name"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "push_name"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "check_number"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "phone"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "update_profile"
+          }
+        }
+      },
+      "then": {
+        "oneOf": [
+          {
+            "required": [
+              "push_name"
+            ],
+            "not": {
+              "required": [
+                "media_id"
+              ]
+            }
+          },
+          {
+            "required": [
+              "media_id"
+            ],
+            "not": {
+              "required": [
+                "push_name"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "update_profile",
+              "update_avatar",
+              "update_push_name"
+            ]
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "phone"
+          ]
+        }
+      }
+    }
+  ]
 }`
