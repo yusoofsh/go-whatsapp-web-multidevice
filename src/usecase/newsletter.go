@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -120,7 +121,19 @@ func (service serviceNewsletter) DownloadMedia(ctx context.Context, request doma
 	}
 
 	newsletterDir := utils.ExtractPhoneNumber(JID.String())
-	dateDir := filepath.Join(config.PathMedia, newsletterDir, message.Timestamp.Format("2006-01-02"))
+	root := config.PathMedia
+	if request.MCPPrivate {
+		deviceID := deviceIDFromContext(ctx)
+		if deviceID == "" {
+			return response, fmt.Errorf("device required for private newsletter download")
+		}
+		if sized, ok := downloadable.(interface{ GetFileLength() uint64 }); ok && sized.GetFileLength() > 10<<20 {
+			return response, fmt.Errorf("MCP attachment exceeds 10 MiB")
+		}
+		scope := sha256.Sum256([]byte(deviceID))
+		root = filepath.Join(config.McpDataDir, "downloads", fmt.Sprintf("%x", scope[:16]))
+	}
+	dateDir := filepath.Join(root, newsletterDir, message.Timestamp.Format("2006-01-02"))
 	if err = os.MkdirAll(dateDir, 0755); err != nil {
 		return response, fmt.Errorf("failed to create media directory: %w", err)
 	}

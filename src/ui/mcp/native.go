@@ -179,26 +179,9 @@ func (h *NativeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-			if envelope.Method == "tools/call" {
-				if requested, ok := envelope.Params.Arguments["device_id"].(string); ok && requested != "" {
-					if h.resolver == nil {
-						h.rpcError(w, envelope.ID, "device manager unavailable")
-						return
-					}
-					d, _, err := h.resolver.ResolveDevice(requested)
-					actual := ""
-					if d != nil {
-						actual = d.JID()
-						if actual == "" {
-							actual = "unpaired:" + d.ID()
-						}
-					}
-					if err != nil || actual != identity.device {
-						h.rpcError(w, envelope.ID, "native MCP sessions are device-bound; reconnect with X-Device-Id for another device")
-						return
-					}
-				}
-			}
+			// Tool-level device_id overrides the header default through
+			// resolveDeviceContext. It does not mutate the authenticated
+			// session identity used for GET/resources/subscriptions.
 			if envelope.Method == "resources/subscribe" || envelope.Method == "resources/unsubscribe" {
 				if envelope.Params.URI != mcpstore.EventResource || identity.device == "" || strings.HasPrefix(identity.device, "unpaired:") {
 					h.rpcError(w, envelope.ID, "only whatsapp://events for a paired device supports subscriptions")

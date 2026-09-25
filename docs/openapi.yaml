@@ -5714,3 +5714,14 @@ components:
               format: date-time
             error:
               type: string
+
+# MCP additions reuse the documented REST usecases; archive tools have no new REST routes.
+x-mcp-capabilities:
+  endpoint: /mcp
+  transport: Streamable HTTP
+  native_gateway_port: 3001
+  schemas: ./mcp-tools.json
+  capability_map: ./capability-map.md
+  external_catalog_migration: ./composio-schema-migration.md
+  account_selection: X-Device-Id default with per-tool device_id override
+  live_whatsapp_verification: false

@@ -170,7 +170,8 @@ func TestNativeMCPStreamingAndOwnership(t *testing.T) {
 	case <-time.After(80 * time.Millisecond):
 	}
 	result, _ = nativeRPC(t, srv.Client(), srv.URL, "alice", session, "a", "tools/call", map[string]any{"name": "whatsapp_events", "arguments": map[string]any{"device_id": "b"}})
-	require.NotNil(t, result["error"])
+	require.Nil(t, result["error"])
+	require.NotEqual(t, true, result["result"].(map[string]any)["isError"])
 	cancel()
 	stream.Body.Close()
 	select {

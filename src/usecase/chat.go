@@ -157,31 +157,11 @@ func (service serviceChat) GetChatMessages(ctx context.Context, request domainCh
 		filter.EndTime = &endTime
 	}
 
-	// Get messages from storage
-	var messages []*domainChatStorage.Message
-	if request.Search != "" {
-		// Use search functionality if search query is provided
-		messages, err = service.chatStorageRepo.SearchMessages(deviceID, request.ChatJID, request.Search, request.Limit)
-		if err != nil {
-			logrus.WithError(err).WithField("chat_jid", request.ChatJID).Error("Failed to search messages")
-			return response, err
-		}
-	} else {
-		// Use regular filter with device_id for data isolation
-		filter.DeviceID = deviceID
-		messages, err = service.chatStorageRepo.GetMessages(filter)
-		if err != nil {
-			logrus.WithError(err).WithField("chat_jid", request.ChatJID).Error("Failed to get messages")
-			return response, err
-		}
-	}
-
-	// Get total message count for pagination
-	totalCount, err := service.chatStorageRepo.GetChatMessageCountByDevice(deviceID, request.ChatJID)
+	// One scoped query combines text, time, media, direction and pagination.
+	filter.DeviceID = deviceID
+	messages, totalCount, err := service.queryStoredChatMessages(ctx, filter, request.Search)
 	if err != nil {
-		logrus.WithError(err).WithField("chat_jid", request.ChatJID).Error("Failed to get message count")
-		// Continue with partial data
-		totalCount = 0
+		return response, err
 	}
 
 	// Convert entities to domain objects

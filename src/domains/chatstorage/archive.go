@@ -1,0 +1,78 @@
+package chatstorage
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+)
+
+const ArchiveMaxLimit = 500
+const ArchiveMaxOffset = 100000
+
+var ErrArchiveAnchorNotFound = errors.New("message not found in the selected device and chat")
+
+// ArchiveFilter always describes one account partition. Empty ChatJID searches
+// across its chats, never across devices. It reuses the existing message index.
+type ArchiveFilter struct {
+	DeviceID    string
+	ChatJID     string
+	Sender      string
+	Search      string
+	StartTime   *time.Time
+	EndTime     *time.Time
+	MediaOnly   bool
+	MediaType   string
+	MessageType string
+	IsFromMe    *bool
+	Limit       int
+	Offset      int
+	Asc         bool
+	// Preserve the legacy per-chat offset contract; not exposed by the archive tool.
+	AllowLargeOffset bool
+}
+
+func (f ArchiveFilter) Validate() error {
+	if strings.TrimSpace(f.DeviceID) == "" {
+		return errors.New("device_id is required for archive access")
+	}
+	if f.Limit < 1 || f.Limit > ArchiveMaxLimit || f.Offset < 0 || (f.Offset > ArchiveMaxOffset && !f.AllowLargeOffset) {
+		return fmt.Errorf("limit must be 1..%d and offset 0..%d", ArchiveMaxLimit, ArchiveMaxOffset)
+	}
+	for _, v := range []string{f.DeviceID, f.ChatJID, f.Sender} {
+		if len(v) > 256 {
+			return errors.New("archive identifier exceeds 256 bytes")
+		}
+	}
+	if len(f.Search) > 1024 {
+		return errors.New("search exceeds 1024 bytes")
+	}
+	valid := map[string]bool{"": true, "text": true, "image": true, "video": true, "video_note": true, "audio": true, "document": true, "sticker": true, "call": true}
+	if !valid[f.MessageType] || !valid[f.MediaType] || f.MediaType == "text" {
+		return errors.New("unsupported stored message/media type")
+	}
+	if f.StartTime != nil && f.EndTime != nil && f.StartTime.After(*f.EndTime) {
+		return errors.New("start_time must not be after end_time")
+	}
+	return nil
+}
+
+type ArchiveCoverage struct {
+	ChatJID         string     `json:"chat_jid"`
+	MessageCount    int64      `json:"message_count"`
+	MediaCount      int64      `json:"media_count"`
+	OldestTimestamp *time.Time `json:"oldest_timestamp"`
+	NewestTimestamp *time.Time `json:"newest_timestamp"`
+	AnchorMessageID string     `json:"anchor_message_id,omitempty"`
+	AnchorTimestamp *time.Time `json:"anchor_timestamp,omitempty"`
+}
+
+// IArchiveRepository is optional so existing integrations implementing the
+// original storage interface remain source-compatible. The SQLite repository
+// and device wrapper both implement it; no parallel archive database is created.
+type IArchiveRepository interface {
+	QueryArchive(context.Context, ArchiveFilter) ([]*Message, int64, error)
+	ContextArchive(context.Context, string, string, string, int, int) ([]*Message, *Message, []*Message, error)
+	CoverageArchive(context.Context, string, string) (ArchiveCoverage, error)
+}

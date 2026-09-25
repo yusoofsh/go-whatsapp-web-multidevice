@@ -55,3 +55,7 @@ Credentials remain administrative, not per-user device ACLs. Device management c
 The integration gate runs the full Go suite, vet, race tests and native build, then exports the actual registered schemas to `mcp-tools.json`. Existing GHCR publication separately tests both native architectures and the real OAuth/PKCE/MCP HTTP handshake. Mock dispatch is distinguished from live WhatsApp acceptance; live delivery, phone history, channel permissions and long-running reliability are unverified.
 
 See `composio-schema-migration.md` for exact connector changes. Existing deployments and the external `custom_gowa` catalog are not altered merely by publishing a new image.
+
+## Reaction identity repair
+
+The existing reaction primary key omitted chat identity. An appended transactional migration preserves existing rows and adds chat JID to the key; reaction updates and incoming removal events now target the full chat/device identity. New collision and migration-preservation tests cover this correction. No historical overwritten reactions can be reconstructed from absent data.

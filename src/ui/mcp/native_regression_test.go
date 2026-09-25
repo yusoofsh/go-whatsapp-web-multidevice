@@ -190,7 +190,8 @@ func TestNativeSessionAuthenticationAndIsolation(t *testing.T) {
 		require.NotEqual(t, 200, resp.StatusCode)
 	}
 	obj := c.rpc(t, "tools/call", map[string]any{"name": "whatsapp_events", "arguments": map[string]any{"device_id": "b"}})
-	require.NotNil(t, obj["error"])
+	require.Nil(t, obj["error"])
+	require.NotEqual(t, true, obj["result"].(map[string]any)["isError"])
 	for _, headers := range []map[string]string{{"Origin": "https://evil.test"}, {"Host": "evil.test"}} {
 		req, err := http.NewRequest("POST", c.base+"/mcp", strings.NewReader(`{}`))
 		require.NoError(t, err)

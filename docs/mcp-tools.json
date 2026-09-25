@@ -1,0 +1,1857 @@
+{
+  "tools": [
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Existing session actions plus list_devices, add_device, remove_device using target_device_id. reject_call handles an existing incoming call only; no voice/video initiation or acceptance.",
+      "inputSchema": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "login_code"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "phone"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "add_device"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "target_device_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "remove_device"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "target_device_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "reject_call"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "caller_jid",
+                "call_id"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "description": "Connection/session operation. login_qr returns a QR image; logout clears stored credentials (destructive)",
+            "enum": [
+              "status",
+              "login_qr",
+              "login_code",
+              "logout",
+              "reconnect",
+              "list_devices",
+              "add_device",
+              "remove_device",
+              "reject_call"
+            ],
+            "type": "string"
+          },
+          "call_id": {
+            "description": "Call ID from an existing incoming-call event",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "caller_jid": {
+            "description": "Caller JID from an existing incoming-call event",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "device_id": {
+            "description": "Act as this device instead of the connection default",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "offset": {
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "phone": {
+            "description": "login_code: phone number in international format (e.g. +628123456789)",
+            "type": "string"
+          },
+          "target_device_id": {
+            "description": "Registry slot to create or remove, separate from the per-call selected device",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_app"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Existing per-chat queries, archive and request_history; also pin, unpin, set_disappearing (0/86400/604800/7776000 seconds). Use whatsapp_history for cross-chat archives.",
+      "inputSchema": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "get_messages"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "chat_jid"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "archive"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "chat_jid",
+                "archived"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "request_history"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "chat_jid"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "pin"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "chat_jid"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "unpin"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "chat_jid"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "set_disappearing"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "chat_jid",
+                "timer_seconds"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "description": "Chat/contact query or archive toggle",
+            "enum": [
+              "list_chats",
+              "list_contacts",
+              "get_messages",
+              "archive",
+              "request_history",
+              "pin",
+              "unpin",
+              "set_disappearing"
+            ],
+            "type": "string"
+          },
+          "archived": {
+            "description": "archive: true to archive, false to unarchive",
+            "type": "boolean"
+          },
+          "chat_jid": {
+            "description": "get_messages/archive: chat JID (e.g. 628@s.whatsapp.net or group@g.us)",
+            "type": "string"
+          },
+          "count": {
+            "description": "request_history: older messages to request (default 50); asynchronous and best effort",
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "device_id": {
+            "description": "Act as this device instead of the connection default",
+            "type": "string"
+          },
+          "end_time": {
+            "description": "get_messages: only messages before this RFC3339 timestamp",
+            "type": "string"
+          },
+          "has_media": {
+            "description": "list_chats: only chats containing media",
+            "type": "boolean"
+          },
+          "is_from_me": {
+            "description": "get_messages: filter by sender (true = sent by me)",
+            "type": "boolean"
+          },
+          "limit": {
+            "description": "list_chats (default 25) / get_messages (default 50): max rows",
+            "type": "integer"
+          },
+          "media_only": {
+            "description": "get_messages: only media messages",
+            "type": "boolean"
+          },
+          "offset": {
+            "description": "list_chats/get_messages: rows to skip (default 0)",
+            "type": "integer"
+          },
+          "pinned": {
+            "type": "boolean"
+          },
+          "search": {
+            "description": "list_chats: filter by chat name; get_messages: full-text search",
+            "type": "string"
+          },
+          "start_time": {
+            "description": "get_messages: only messages after this RFC3339 timestamp",
+            "type": "string"
+          },
+          "timer_seconds": {
+            "enum": [
+              0,
+              86400,
+              604800,
+              7776000
+            ],
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_chat"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": true
+      },
+      "description": "Read durable device-scoped events after cursor, limit 1..500. Save next_cursor. On cursor_expired rescan chats/history. References only; query messages separately. Native streaming clients subscribe to whatsapp://events.",
+      "inputSchema": {
+        "properties": {
+          "cursor": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "name": "whatsapp_events"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Existing group actions plus get_photo, set_photo from a staged media_id, remove_photo and bounded JSON export_participants. Removing photos or members is destructive.",
+      "inputSchema": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "create"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "title"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "join_with_link"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "invite_link"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "leave",
+                    "info",
+                    "participants",
+                    "invite_link",
+                    "join_requests"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "group_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "add_participants",
+                    "remove_participants",
+                    "promote",
+                    "demote"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "group_id",
+                "participants"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "set_name"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "group_id",
+                "name"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "set_topic"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "group_id",
+                "topic"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "set_settings"
+                }
+              }
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "required": [
+                    "announce"
+                  ]
+                },
+                {
+                  "required": [
+                    "locked"
+                  ]
+                }
+              ],
+              "required": [
+                "group_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "manage_join_requests"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "group_id",
+                "participants",
+                "request_action"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "get_photo"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "group_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "remove_photo"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "group_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "export_participants"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "group_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "set_photo"
+                }
+              },
+              "required": [
+                "action"
+              ]
+            },
+            "then": {
+              "required": [
+                "group_id",
+                "media_id"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "description": "Group operation",
+            "enum": [
+              "create",
+              "join_with_link",
+              "leave",
+              "info",
+              "participants",
+              "add_participants",
+              "remove_participants",
+              "promote",
+              "demote",
+              "invite_link",
+              "set_name",
+              "set_topic",
+              "set_settings",
+              "join_requests",
+              "manage_join_requests",
+              "get_photo",
+              "set_photo",
+              "remove_photo",
+              "export_participants"
+            ],
+            "type": "string"
+          },
+          "announce": {
+            "description": "set_settings: true = only admins can send",
+            "type": "boolean"
+          },
+          "device_id": {
+            "description": "Act as this device instead of the connection default",
+            "type": "string"
+          },
+          "group_id": {
+            "description": "Group JID or numeric ID (all actions except create/join_with_link)",
+            "type": "string"
+          },
+          "inline": {
+            "type": "boolean"
+          },
+          "invite_link": {
+            "description": "join_with_link: WhatsApp invite link",
+            "type": "string"
+          },
+          "limit": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "locked": {
+            "description": "set_settings: true = only admins can edit group info",
+            "type": "boolean"
+          },
+          "media_id": {
+            "description": "Private image staged by whatsapp_media for the selected device",
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "description": "set_name: new group name",
+            "type": "string"
+          },
+          "offset": {
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "participants": {
+            "description": "create (optional) / add_participants / remove_participants / promote / demote / manage_join_requests: phone numbers without suffix",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "request_action": {
+            "description": "manage_join_requests: what to do with the listed requesters",
+            "enum": [
+              "approve",
+              "reject"
+            ],
+            "type": "string"
+          },
+          "reset": {
+            "description": "invite_link: revoke and regenerate the link (default false)",
+            "type": "boolean"
+          },
+          "title": {
+            "description": "create: group subject",
+            "type": "string"
+          },
+          "topic": {
+            "description": "set_topic: new topic/description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_group"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Device-scoped local archive: search_all with combined filters, chronological context, bounded JSON export, coverage and asynchronous best-effort request_backfill. Stored coverage never proves complete phone history. Text-preferring clients receive JSON results.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "context"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "chat_jid",
+                "message_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "coverage",
+                    "request_backfill"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "chat_jid"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "search_all",
+              "context",
+              "export",
+              "coverage",
+              "request_backfill"
+            ],
+            "type": "string"
+          },
+          "after": {
+            "default": 10,
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "before": {
+            "default": 10,
+            "maximum": 100,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "chat_jid": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "count": {
+            "default": 50,
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "device_id": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "end_time": {
+            "description": "Inclusive RFC3339 or YYYY-MM-DD (midnight UTC)",
+            "maxLength": 40,
+            "type": "string"
+          },
+          "inline": {
+            "default": false,
+            "type": "boolean"
+          },
+          "is_from_me": {
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 500,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "media_only": {
+            "type": "boolean"
+          },
+          "media_type": {
+            "enum": [
+              "image",
+              "video",
+              "video_note",
+              "audio",
+              "document",
+              "sticker",
+              "call"
+            ],
+            "type": "string"
+          },
+          "message_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "message_type": {
+            "enum": [
+              "text",
+              "image",
+              "video",
+              "video_note",
+              "audio",
+              "document",
+              "sticker",
+              "call"
+            ],
+            "type": "string"
+          },
+          "offset": {
+            "default": 0,
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "search": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "sender": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "start_time": {
+            "description": "Inclusive RFC3339 or YYYY-MM-DD (midnight UTC)",
+            "maxLength": 40,
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_history"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Stage an attachment with action=upload, data_base64, filename, mime_type; then send using whatsapp_send media_id. action=read returns bytes over MCP. Maximum 10 MiB/file, 24-hour expiry, device-scoped. No server paths.",
+      "inputSchema": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "upload"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "data_base64",
+                "filename",
+                "mime_type"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "read"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "media_id"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "upload",
+              "read"
+            ],
+            "type": "string"
+          },
+          "data_base64": {
+            "maxLength": 13981016,
+            "type": "string"
+          },
+          "device_id": {
+            "type": "string"
+          },
+          "filename": {
+            "maxLength": 160,
+            "minLength": 1,
+            "type": "string"
+          },
+          "include_data": {
+            "description": "Include data_base64 in structuredContent for clients which discard binary content; default false",
+            "type": "boolean"
+          },
+          "media_id": {
+            "maxLength": 36,
+            "type": "string"
+          },
+          "mime_type": {
+            "maxLength": 120,
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_media"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "Message Operations"
+      },
+      "description": "Operate on an existing WhatsApp message: react, edit, revoke (delete for everyone), delete (for me), mark_read, mark_played, star, unstar, or download_media.",
+      "inputSchema": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "edit"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "message"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "description": "Operation on an existing message. revoke = delete for everyone (destructive); delete = delete for me only; mark_played sends the played receipt for an incoming audio message; download_media returns private MCP attachment metadata and bytes when MCP data storage is enabled",
+            "enum": [
+              "react",
+              "edit",
+              "revoke",
+              "delete",
+              "mark_read",
+              "mark_played",
+              "star",
+              "unstar",
+              "download_media"
+            ],
+            "type": "string"
+          },
+          "device_id": {
+            "description": "Act as this device instead of the connection default",
+            "type": "string"
+          },
+          "emoji": {
+            "description": "action=react: emoji to react with; empty string removes the reaction",
+            "type": "string"
+          },
+          "inline": {
+            "description": "download_media: embed image or binary MCP content (default true); false returns a private MCP resource URI",
+            "type": "boolean"
+          },
+          "message": {
+            "description": "action=edit: replacement text (works ~15 minutes after send)",
+            "type": "string"
+          },
+          "message_id": {
+            "description": "The WhatsApp message ID",
+            "type": "string"
+          },
+          "phone": {
+            "description": "Phone number or group JID of the chat containing the message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "phone",
+          "message_id"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_message"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "List subscribed channels, get_messages with count/before pagination, private download_media by server_id, and unfollow. Follow/join and publishing are not exposed by the pinned GoWA REST usecase.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "get_messages",
+                    "download_media",
+                    "unfollow"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "newsletter_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "download_media"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "server_id"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "list",
+              "get_messages",
+              "download_media",
+              "unfollow"
+            ],
+            "type": "string"
+          },
+          "before": {
+            "maximum": 2147483646,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "count": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "device_id": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "inline": {
+            "default": true,
+            "type": "boolean"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "newsletter_id": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "offset": {
+            "maximum": 100000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "server_id": {
+            "maximum": 2147483646,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_newsletter"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Get profile/avatar/business profile/privacy. Update own push name or avatar with staged media_id; update_profile accepts exactly one of those fields. Privacy and business-profile writes are unsupported. phone defaults to the selected account for reads.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "update_avatar"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "media_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "update_push_name"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "push_name"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "check_number"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "phone"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "update_profile"
+                }
+              }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "media_id"
+                    ]
+                  },
+                  "required": [
+                    "push_name"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "push_name"
+                    ]
+                  },
+                  "required": [
+                    "media_id"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "get_profile",
+              "get_avatar",
+              "update_avatar",
+              "update_push_name",
+              "update_profile",
+              "get_privacy",
+              "get_business_profile",
+              "check_number"
+            ],
+            "type": "string"
+          },
+          "device_id": {
+            "maxLength": 256,
+            "type": "string"
+          },
+          "is_community": {
+            "type": "boolean"
+          },
+          "is_preview": {
+            "type": "boolean"
+          },
+          "media_id": {
+            "maxLength": 36,
+            "minLength": 36,
+            "type": "string"
+          },
+          "phone": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "push_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_profile"
+    },
+    {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Send text/media and existing message types. Additional types: presence (available/unavailable), chat_presence (start/stop), status (status_type text/image/video; broadcasts to the account's existing status privacy audience, not a single recipient).",
+      "inputSchema": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "text"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "message"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "image"
+                }
+              }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "media_id"
+                    ]
+                  },
+                  "required": [
+                    "image_url"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "image_url"
+                    ]
+                  },
+                  "required": [
+                    "media_id"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "video"
+                }
+              }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "media_id"
+                    ]
+                  },
+                  "required": [
+                    "video_url"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "video_url"
+                    ]
+                  },
+                  "required": [
+                    "media_id"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "audio"
+                }
+              }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "media_id"
+                    ]
+                  },
+                  "required": [
+                    "audio_url"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "audio_url"
+                    ]
+                  },
+                  "required": [
+                    "media_id"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "document"
+                }
+              }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "media_id"
+                    ]
+                  },
+                  "required": [
+                    "file_url"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "file_url"
+                    ]
+                  },
+                  "required": [
+                    "media_id"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "sticker"
+                }
+              }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "media_id"
+                    ]
+                  },
+                  "required": [
+                    "sticker_url"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "sticker_url"
+                    ]
+                  },
+                  "required": [
+                    "media_id"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "location"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "latitude",
+                "longitude"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "contact"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "contact_name",
+                "contact_phone"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "poll"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "question",
+                "options"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "link"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "link",
+                "caption"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "forward"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "message_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "text",
+                    "image",
+                    "video",
+                    "audio",
+                    "document",
+                    "sticker",
+                    "location",
+                    "contact",
+                    "poll",
+                    "link",
+                    "forward"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "phone"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "presence"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "required": [
+                "presence"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "chat_presence"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "required": [
+                "phone",
+                "chat_presence"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "status"
+                }
+              },
+              "required": [
+                "type"
+              ]
+            },
+            "then": {
+              "required": [
+                "status_type"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status_type": {
+                  "const": "text"
+                },
+                "type": {
+                  "const": "status"
+                }
+              },
+              "required": [
+                "type",
+                "status_type"
+              ]
+            },
+            "then": {
+              "required": [
+                "message"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status_type": {
+                  "const": "image"
+                },
+                "type": {
+                  "const": "status"
+                }
+              },
+              "required": [
+                "type",
+                "status_type"
+              ]
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "media_id"
+                    ]
+                  },
+                  "required": [
+                    "image_url"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "image_url"
+                    ]
+                  },
+                  "required": [
+                    "media_id"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "status_type": {
+                  "const": "video"
+                },
+                "type": {
+                  "const": "status"
+                }
+              },
+              "required": [
+                "type",
+                "status_type"
+              ]
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "not": {
+                    "required": [
+                      "media_id"
+                    ]
+                  },
+                  "required": [
+                    "video_url"
+                  ]
+                },
+                {
+                  "not": {
+                    "required": [
+                      "video_url"
+                    ]
+                  },
+                  "required": [
+                    "media_id"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "audio_url": {
+            "description": "type=audio: URL of the audio file (fetched server-side)",
+            "type": "string"
+          },
+          "caption": {
+            "description": "image/video/document/link: caption text",
+            "type": "string"
+          },
+          "chat_presence": {
+            "enum": [
+              "start",
+              "stop"
+            ],
+            "type": "string"
+          },
+          "compress": {
+            "description": "image (default true) / video (default false): re-encode before sending",
+            "type": "boolean"
+          },
+          "contact_name": {
+            "description": "type=contact: contact display name",
+            "type": "string"
+          },
+          "contact_phone": {
+            "description": "type=contact: contact phone number",
+            "type": "string"
+          },
+          "device_id": {
+            "description": "Act as this device instead of the connection default (X-Device-Id header)",
+            "type": "string"
+          },
+          "duration": {
+            "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)",
+            "type": "integer"
+          },
+          "file_url": {
+            "description": "type=document: URL of the file; MIME type and filename derived server-side",
+            "type": "string"
+          },
+          "force_reupload": {
+            "description": "type=forward: re-upload media instead of reusing references (default false)",
+            "type": "boolean"
+          },
+          "gif_playback": {
+            "description": "type=video: play as looping GIF (default false)",
+            "type": "boolean"
+          },
+          "hd": {
+            "description": "image/video: send HD without upscaling (image: 2560px max edge; video: H.264 8-bit YUV 4:2:0 at CRF 23, capped at 1280x1280); overrides compress when true (default false)",
+            "type": "boolean"
+          },
+          "image_url": {
+            "description": "type=image: URL of the image (fetched server-side)",
+            "type": "string"
+          },
+          "is_forwarded": {
+            "description": "Mark the message as forwarded (default false)",
+            "type": "boolean"
+          },
+          "latitude": {
+            "description": "type=location: latitude as string",
+            "type": "string"
+          },
+          "link": {
+            "description": "type=link: the URL to send",
+            "type": "string"
+          },
+          "longitude": {
+            "description": "type=location: longitude as string",
+            "type": "string"
+          },
+          "max_answer": {
+            "description": "type=poll: max selectable options (default 1)",
+            "type": "integer"
+          },
+          "media_id": {
+            "description": "Attachment staged by whatsapp_media; replaces the matching media URL and is scoped to this device",
+            "maxLength": 36,
+            "minLength": 36,
+            "type": "string"
+          },
+          "mentions": {
+            "description": "type=text: ghost mentions; \"@everyone\" mentions all group participants",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "message": {
+            "description": "type=text: the text body",
+            "type": "string"
+          },
+          "message_id": {
+            "description": "type=forward: source message ID from chat storage",
+            "type": "string"
+          },
+          "options": {
+            "description": "type=poll: poll options (min 2)",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 2,
+            "type": "array"
+          },
+          "phone": {
+            "description": "Destination phone number or group JID",
+            "type": "string"
+          },
+          "presence": {
+            "enum": [
+              "available",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "ptt": {
+            "description": "type=audio: send as voice note (requires ffmpeg server-side, default false)",
+            "type": "boolean"
+          },
+          "question": {
+            "description": "type=poll: the poll question",
+            "type": "string"
+          },
+          "reply_message_id": {
+            "description": "type=text: message ID to reply to",
+            "type": "string"
+          },
+          "status_type": {
+            "enum": [
+              "text",
+              "image",
+              "video"
+            ],
+            "type": "string"
+          },
+          "sticker_url": {
+            "description": "type=sticker: URL of an image to convert to a WebP sticker",
+            "type": "string"
+          },
+          "type": {
+            "description": "Kind of message to send",
+            "enum": [
+              "text",
+              "image",
+              "video",
+              "audio",
+              "document",
+              "sticker",
+              "location",
+              "contact",
+              "poll",
+              "link",
+              "forward",
+              "status",
+              "presence",
+              "chat_presence"
+            ],
+            "type": "string"
+          },
+          "video_url": {
+            "description": "type=video: URL of the video (mp4/mkv/avi, fetched server-side)",
+            "type": "string"
+          },
+          "view_once": {
+            "description": "image/video: view-once message (default false)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_send"
+    }
+  ]
+}

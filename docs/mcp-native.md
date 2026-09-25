@@ -89,8 +89,8 @@ mean that WhatsApp is paired, connected or has complete history.
 
 ## MCP feature surface
 
-The five existing consolidated tools remain. Two tools are added, for seven in
-this branch. This is feature coverage, not a claim that every upstream REST
+The five original consolidated names remain. The native server now registers ten
+tools: those five plus media, events, history, newsletter and profile. This is feature coverage, not a claim that every upstream REST
 endpoint has been turned into an MCP action.
 
 ### Request older history
@@ -187,10 +187,10 @@ This does not implement a separate `Last-Event-ID` notification replay store.
 ## Security and operations
 
 Authentication is checked on every native request, including GET. Session IDs
-are not credentials. Cross-principal session reuse and cross-device session
-reuse are rejected. Select a device with `X-Device-Id`; reconnect to switch
-devices. An explicit conflicting tool `device_id` cannot change a session's
-identity. Unpaired devices cannot read attachments or subscribe to account data.
+are not credentials. Cross-principal session reuse and changing the default header device of an existing
+session are rejected. Per-call `device_id` overrides are supported for tools without
+changing the default resource/SSE subscription identity. Use a separate session
+when switching a subscription to another account. Unpaired devices cannot read attachments or subscribe to account data.
 
 The inherited GOWA credentials are administrative credentials. Device scoping
 prevents accidental cross-device data access; it does **not** create a new
@@ -222,3 +222,9 @@ production reliability need validation with an authorized non-critical account.
 Neither this fork nor stock GOWA can guarantee complete lifetime history.
 MCP notification support depends on the client and does not automatically start
 a ChatGPT conversation or trigger a background agent.
+
+## Archive and REST capability expansion
+
+See [capability-map.md](capability-map.md) for the complete audited surface,
+[composio-schema-migration.md](composio-schema-migration.md) for external catalog
+changes, and [mcp-tools.json](mcp-tools.json) for generated exact input schemas.

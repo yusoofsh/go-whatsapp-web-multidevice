@@ -40,6 +40,7 @@ type GetMessagesResponse struct {
 }
 
 type DownloadMediaRequest struct {
+	MCPPrivate   bool   `json:"-" form:"-" query:"-"`
 	NewsletterID string `json:"newsletter_id" query:"newsletter_id"`
 	ServerID     int    `json:"server_id" uri:"server_id"`
 }

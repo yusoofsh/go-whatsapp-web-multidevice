@@ -1,0 +1,62 @@
+package chat
+
+import (
+	"context"
+	storage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+)
+
+type HistoryRequest struct {
+	Action      string
+	ChatJID     string
+	MessageID   string
+	Sender      string
+	Search      string
+	StartTime   string
+	EndTime     string
+	MediaOnly   bool
+	MediaType   string
+	MessageType string
+	IsFromMe    *bool
+	Limit       int
+	Offset      int
+	Before      int
+	After       int
+	Count       int
+}
+
+// HistoryMessage is deliberately not the persistence entity: encryption keys,
+// CDN tokens, raw protocol payloads and device credentials are never exported.
+type HistoryMessage struct {
+	ID          string `json:"id"`
+	ChatJID     string `json:"chat_jid"`
+	SenderJID   string `json:"sender_jid"`
+	Content     string `json:"content"`
+	Timestamp   string `json:"timestamp"`
+	IsFromMe    bool   `json:"is_from_me"`
+	MediaType   string `json:"media_type,omitempty"`
+	MessageType string `json:"message_type"`
+	Filename    string `json:"filename,omitempty"`
+	FileLength  uint64 `json:"file_length,omitempty"`
+}
+
+type HistoryResponse struct {
+	Action       string                      `json:"action"`
+	Messages     []HistoryMessage            `json:"messages,omitempty"`
+	Before       []HistoryMessage            `json:"before,omitempty"`
+	Anchor       *HistoryMessage             `json:"anchor,omitempty"`
+	After        []HistoryMessage            `json:"after,omitempty"`
+	Coverage     *storage.ArchiveCoverage    `json:"coverage,omitempty"`
+	Backfill     *RequestChatHistoryResponse `json:"backfill,omitempty"`
+	Limit        int                         `json:"limit,omitempty"`
+	Offset       int                         `json:"offset"`
+	Total        int64                       `json:"total"`
+	NextOffset   int                         `json:"next_offset"`
+	HasMore      bool                        `json:"has_more"`
+	Asynchronous bool                        `json:"asynchronous"`
+	BestEffort   bool                        `json:"best_effort"`
+	Completeness string                      `json:"completeness"`
+}
+
+type IHistoryUsecase interface {
+	History(context.Context, HistoryRequest) (HistoryResponse, error)
+}

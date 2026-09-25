@@ -3,9 +3,12 @@ package mcp
 import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	domainApp "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/app"
+	domainCall "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/call"
 	domainChat "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chat"
+	domainDevice "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/device"
 	domainGroup "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/group"
 	domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
+	domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
 	domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/mcpstore"
@@ -15,13 +18,16 @@ import (
 // Deps carries the usecase instances the MCP tools call — the same instances
 // the REST handlers hold, so both surfaces share one whatsmeow session.
 type Deps struct {
-	Data    *mcpstore.Store
-	App     domainApp.IAppUsecase
-	Send    domainSend.ISendUsecase
-	Chat    domainChat.IChatUsecase
-	User    domainUser.IUserUsecase
-	Message domainMessage.IMessageUsecase
-	Group   domainGroup.IGroupUsecase
+	Device     domainDevice.IDeviceUsecase
+	Newsletter domainNewsletter.INewsletterUsecase
+	Call       domainCall.ICallUsecase
+	Data       *mcpstore.Store
+	App        domainApp.IAppUsecase
+	Send       domainSend.ISendUsecase
+	Chat       domainChat.IChatUsecase
+	User       domainUser.IUserUsecase
+	Message    domainMessage.IMessageUsecase
+	Group      domainGroup.IGroupUsecase
 }
 
 // NewServer registers the five upstream tools and optional media/event tools.
@@ -46,5 +52,6 @@ func NewServer(deps Deps, resolver deviceResolver, options ...server.ServerOptio
 	if deps.Data != nil {
 		registerDataTools(s, deps.Data, resolver)
 	}
+	registerParityTools(s, deps, resolver)
 	return s
 }

@@ -430,7 +430,7 @@ func (r *SQLiteRepository) StoreReaction(reaction *domainChatStorage.Reaction) e
 		return fmt.Errorf("reaction requires message_id, chat_jid, device_id, and reactor_jid")
 	}
 	if reaction.Emoji == "" {
-		return r.DeleteReaction(reaction.MessageID, reaction.ReactorJID, reaction.DeviceID)
+		return r.deleteReactionInChat(reaction.MessageID, reaction.ChatJID, reaction.ReactorJID, reaction.DeviceID)
 	}
 
 	now := time.Now()
@@ -442,9 +442,9 @@ func (r *SQLiteRepository) StoreReaction(reaction *domainChatStorage.Reaction) e
 	result, err := r.db.Exec(`
 		UPDATE message_reactions
 		SET chat_jid = ?, emoji = ?, is_from_me = ?, reaction_timestamp = ?, updated_at = ?
-		WHERE message_id = ? AND reactor_jid = ? AND device_id = ?
+		WHERE message_id = ? AND reactor_jid = ? AND device_id = ? AND chat_jid = ?
 	`, reaction.ChatJID, reaction.Emoji, reaction.IsFromMe, reaction.Timestamp, reaction.UpdatedAt,
-		reaction.MessageID, reaction.ReactorJID, reaction.DeviceID)
+		reaction.MessageID, reaction.ReactorJID, reaction.DeviceID, reaction.ChatJID)
 	if err != nil {
 		return err
 	}
@@ -2573,7 +2573,7 @@ func (r *SQLiteRepository) runMigration(migration string, version int) error {
 // getMigrations returns all database migrations
 // Compatible with SQLite, MySQL, and PostgreSQL
 func (r *SQLiteRepository) getMigrations() []string {
-	return []string{
+	return append([]string{
 		// Migration 1: Create chats table
 		`CREATE TABLE IF NOT EXISTS chats (
 			jid VARCHAR(255) NOT NULL,
@@ -2806,5 +2806,5 @@ func (r *SQLiteRepository) getMigrations() []string {
 		)`,
 		// Migration 45: Anchor on-demand history sync without sorting the whole chat
 		`CREATE INDEX IF NOT EXISTS idx_messages_chat_device_timestamp ON messages(chat_jid, device_id, timestamp)`,
-	}
+	}, reactionScopeMigration)
 }

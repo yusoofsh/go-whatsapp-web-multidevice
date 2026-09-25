@@ -432,7 +432,7 @@ const messageSchema = `{
         "unstar",
         "download_media"
       ],
-      "description": "Operation on an existing message. revoke = delete for everyone (destructive); delete = delete for me only; mark_played sends the played receipt for an incoming audio message; download_media returns the local file path"
+      "description": "Operation on an existing message. revoke = delete for everyone (destructive); delete = delete for me only; mark_played sends the played receipt for an incoming audio message; download_media returns private MCP attachment metadata and bytes when MCP data storage is enabled"
     },
     "phone": {
       "type": "string",

@@ -23,7 +23,7 @@ ALTER TABLE message_reactions_scoped RENAME TO message_reactions;
 CREATE INDEX idx_message_reactions_lookup ON message_reactions(device_id,chat_jid,message_id);
 `
 
-func (r *SQLiteRepository) deleteReactionInChat(messageID,chatJID,reactorJID,deviceID string)error{
- _,err:=r.db.Exec("DELETE FROM message_reactions WHERE message_id=? AND chat_jid=? AND reactor_jid=? AND device_id=?",messageID,chatJID,reactorJID,deviceID)
- return err
+func (r *SQLiteRepository) deleteReactionInChat(messageID, chatJID, reactorJID, deviceID string) error {
+	_, err := r.db.Exec("DELETE FROM message_reactions WHERE message_id=? AND chat_jid=? AND reactor_jid=? AND device_id=?", messageID, chatJID, reactorJID, deviceID)
+	return err
 }
