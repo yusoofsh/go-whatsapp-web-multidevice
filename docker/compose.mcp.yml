@@ -1,0 +1,29 @@
+services:
+  gowa:
+    image: ghcr.io/yusoofsh/go-whatsapp-web-multidevice:${GOWA_IMAGE_TAG:-mcp}
+    restart: unless-stopped
+    stop_grace_period: 20s
+    ports:
+      - "127.0.0.1:${GOWA_PORT:-3001}:3001"
+    environment:
+      TZ: ${TZ:-Asia/Jakarta}
+      APP_BASIC_AUTH: ${APP_BASIC_AUTH:?Set APP_BASIC_AUTH to username:strong-password}
+      APP_UI_ENABLED: "true"
+      MCP_ENABLED: "true"
+      MCP_STREAMING_ENABLED: "true"
+      MCP_STREAM_PORT: "3001"
+      MCP_OAUTH_ENABLED: "true"
+      MCP_OAUTH_ISSUER_URL: ${GOWA_PUBLIC_URL:?Set GOWA_PUBLIC_URL to the public HTTPS origin without a trailing slash}
+      MCP_OAUTH_RESOURCE_URL: ${GOWA_PUBLIC_URL}/mcp
+      MCP_DATA_DIR: storages/mcp
+    volumes:
+      - gowa_storages:/app/storages
+      - gowa_statics:/app/statics
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  gowa_storages:
+  gowa_statics:

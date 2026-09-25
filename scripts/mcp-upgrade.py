@@ -1,22 +1,18 @@
-"""One-time guard patch. Applied and committed by the temporary integration job."""
+"""Final one-time integration: expose non-sensitive gateway process health."""
 from pathlib import Path
-p=Path('src/ui/mcp/native.go')
+p=Path('src/cmd/mcp_runtime.go')
 s=p.read_text()
-if 'isInitialize := false' not in s:
-    old='if r.Method == http.MethodPost {'
+if 'r.URL.Path == "/healthz"' not in s:
+    old='if r.URL.Path == route {'
     assert s.count(old)==1
-    s=s.replace(old,'isInitialize := false\n\t'+old,1)
-    old='if envelope.Method == "initialize" {'
-    assert s.count(old)==1
-    s=s.replace(old,'isInitialize = envelope.Method == "initialize"\n\t\t\t'+old,1)
-    old='if r.Method == http.MethodGet {'
-    assert s.count(old)==1
-    s=s.replace(old,'''// The SDK does not validate session IDs on GET. Enforce ownership here
-    // for every non-initialize method, including GET, before opening a stream.
-    if !isInitialize {
-        terminated, err := h.ResolveSessionIdManager(r).Validate(r.Header.Get("Mcp-Session-Id"))
-        if err != nil || terminated {http.Error(w,"invalid MCP session",http.StatusNotFound);return}
-    }
-    '''+old,1)
+    s=s.replace(old,'''if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
+            w.Header().Set("Content-Type","application/json")
+            w.Header().Set("Cache-Control","no-store")
+            _, _ = w.Write([]byte(`{"status":"ok","transport":"streamable-http"}`))
+            return
+        }
+        '''+old,1)
 p.write_text(s)
-print('Native session ownership is enforced on POST, GET and DELETE.')
+assert 'isInitialize := false' in Path('src/ui/mcp/native.go').read_text()
+assert 'GetMessageByIDChatAndDevice(deviceID, dataWaRecipient.String(), request.MessageID)' in Path('src/usecase/message.go').read_text()
+print('Private media, GET session ownership and process health are integrated.')
