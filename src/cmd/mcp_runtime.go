@@ -73,7 +73,7 @@ func startNativeMcpGateway(dm *whatsapp.DeviceManager, oauthServer *mcpoauth.Ser
 	authenticate := func(r *http.Request) (string, error) {
 		scheme, _, _, _ := parseBasicAuthorization(r.Header.Get("Authorization"))
 		if scheme == "basic" {
-			username, valid, err := authenticateNativeBasic(r, basic, basicLimiter)
+			username, valid, err := authenticateNativeBasic(r, basic, basicLimiter, config.AppTrustedProxies)
 			if err != nil {
 				return "", err
 			}

@@ -5,7 +5,9 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -36,6 +38,78 @@ type basicAuthFailureResult struct {
 	blocked      bool
 	newlyBlocked bool
 	retryAfter   time.Duration
+}
+
+// basicAuthClientIP normalizes an address to a stable IP identity. A TCP
+// source port is ephemeral and must not be part of an authentication budget:
+// otherwise every reconnect would create a fresh bucket.
+func basicAuthClientIP(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if host, _, err := net.SplitHostPort(raw); err == nil {
+		raw = host
+	}
+	raw = strings.Trim(strings.TrimSpace(raw), "[]")
+	addr, err := netip.ParseAddr(raw)
+	if err != nil {
+		return ""
+	}
+	return addr.Unmap().String()
+}
+
+// trustedProxyIP reports whether an address is explicitly configured as a
+// trusted reverse proxy. X-Forwarded-For is ignored unless the immediate peer
+// is trusted, so a direct client cannot select its own rate-limit identity.
+func trustedProxyIP(raw string, proxies []string) bool {
+	addr, err := netip.ParseAddr(basicAuthClientIP(raw))
+	if err != nil {
+		return false
+	}
+	for _, rawProxy := range proxies {
+		rawProxy = strings.TrimSpace(rawProxy)
+		if rawProxy == "" {
+			continue
+		}
+		if strings.Contains(rawProxy, "/") {
+			_, network, err := net.ParseCIDR(rawProxy)
+			if err == nil && network.Contains(net.IP(addr.AsSlice())) {
+				return true
+			}
+			continue
+		}
+		proxyIP := basicAuthClientIP(rawProxy)
+		if proxyIP != "" && proxyIP == addr.String() {
+			return true
+		}
+	}
+	return false
+}
+
+// basicAuthForwardedClientIP applies the same right-to-left trusted-proxy
+// rule used by Fiber for the native net/http MCP gateway. It never trusts an
+// X-Forwarded-For value from an untrusted immediate peer.
+func basicAuthForwardedClientIP(r *http.Request, trustedProxies []string) string {
+	if r == nil {
+		return ""
+	}
+	remoteIP := basicAuthClientIP(r.RemoteAddr)
+	if remoteIP == "" || !trustedProxyIP(remoteIP, trustedProxies) {
+		return remoteIP
+	}
+	forwarded := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(forwarded) - 1; i >= 0; i-- {
+		candidate := basicAuthClientIP(forwarded[i])
+		if candidate == "" {
+			continue
+		}
+		if trustedProxyIP(candidate, trustedProxies) {
+			continue
+		}
+		return candidate
+	}
+	return remoteIP
 }
 
 // basicAuthFailureLimiter is deliberately local to a server process. It only
@@ -107,6 +181,29 @@ func (l *basicAuthFailureLimiter) recordFailure(key string) basicAuthFailureResu
 	return result
 }
 
+// blocked returns the current cooldown without changing the failure budget.
+// Callers must invoke this before credential verification so a blocked Basic
+// request cannot continue to consume verifier work.
+func (l *basicAuthFailureLimiter) blocked(key string) basicAuthFailureResult {
+	if key == "" {
+		key = "unknown"
+	}
+	now := l.now()
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pruneLocked(now)
+	state, ok := l.entries[key]
+	if !ok || state.blockedUntil.IsZero() || !now.Before(state.blockedUntil) {
+		return basicAuthFailureResult{}
+	}
+	return basicAuthFailureResult{
+		count:      state.failures,
+		blocked:    true,
+		retryAfter: state.blockedUntil.Sub(now),
+	}
+}
+
 func (l *basicAuthFailureLimiter) reset(key string) {
 	if key == "" {
 		return
@@ -145,15 +242,20 @@ func (l *basicAuthFailureLimiter) evictOldestLocked() {
 }
 
 func basicAuthClientKey(c fiber.Ctx) string {
+	if ip := basicAuthClientIP(c.IP()); ip != "" {
+		return ip
+	}
 	if addr := c.RequestCtx().RemoteAddr(); addr != nil {
-		return addr.String()
+		if ip := basicAuthClientIP(addr.String()); ip != "" {
+			return ip
+		}
 	}
 	return "unknown"
 }
 
-func basicAuthHTTPClientKey(r *http.Request) string {
-	if r != nil && r.RemoteAddr != "" {
-		return r.RemoteAddr
+func basicAuthHTTPClientKey(r *http.Request, trustedProxies []string) string {
+	if ip := basicAuthForwardedClientIP(r, trustedProxies); ip != "" {
+		return ip
 	}
 	return "unknown"
 }
@@ -234,9 +336,10 @@ func parseBasicAuthorization(header string) (scheme, username, password string, 
 }
 
 // newBasicAuthMiddleware retains Fiber's standards-compliant Basic parser and
-// challenge while adding a bounded failure budget. Successful credentials are
-// evaluated before the block decision, so a valid administrator can recover
-// immediately even when the same client has accumulated failed attempts.
+// challenge while adding a bounded failure budget. The cooldown is checked
+// before credential verification, so repeated guesses cannot keep invoking the
+// verifier. A valid administrator can recover after the cooldown, or through
+// an already-authenticated Bearer/MCP stream or an administrative side path.
 func newBasicAuthMiddleware(accounts map[string]string) fiber.Handler {
 	limiter := newBasicAuthFailureLimiter()
 	auth := basicauth.New(basicauth.Config{
@@ -264,15 +367,21 @@ func newBasicAuthMiddleware(accounts map[string]string) fiber.Handler {
 	})
 
 	return func(c fiber.Ctx) error {
-		// Count malformed Basic attempts as failures too, while leaving Bearer,
-		// missing, and other schemes completely outside this limiter.
 		header := c.Get(fiber.HeaderAuthorization)
 		scheme, _, _, parsed := parseBasicAuthorization(header)
-		if scheme == "basic" && !parsed {
-			result := limiter.recordFailure(basicAuthClientKey(c))
-			logBasicAuthThrottle(result)
-			if result.blocked {
+		if scheme == "basic" {
+			key := basicAuthClientKey(c)
+			if result := limiter.blocked(key); result.blocked {
 				return basicAuthRateLimitedResponse(c, result.retryAfter)
+			}
+			// Count malformed Basic attempts too, while leaving Bearer, missing,
+			// and other schemes completely outside this limiter.
+			if !parsed {
+				result := limiter.recordFailure(key)
+				logBasicAuthThrottle(result)
+				if result.blocked {
+					return basicAuthRateLimitedResponse(c, result.retryAfter)
+				}
 			}
 		}
 		return auth(c)
@@ -289,6 +398,9 @@ func wrapMCPBasicAuthLimiter(next fiber.Handler, validate func(string, string) b
 			return next(c)
 		}
 		key := basicAuthClientKey(c)
+		if result := limiter.blocked(key); result.blocked {
+			return basicAuthRateLimitedResponse(c, result.retryAfter)
+		}
 		if parsed && validate(username, password) {
 			limiter.reset(key)
 			return next(c)
@@ -316,6 +428,9 @@ func wrapOAuthAuthorizeBasicAuthLimiter(next fiber.Handler, validate func(string
 			return next(c)
 		}
 		key := basicAuthClientKey(c)
+		if result := limiter.blocked(key); result.blocked {
+			return basicAuthRateLimitedResponse(c, result.retryAfter)
+		}
 		if validate(username, password) {
 			limiter.reset(key)
 			return next(c)
@@ -329,12 +444,15 @@ func wrapOAuthAuthorizeBasicAuthLimiter(next fiber.Handler, validate func(string
 	}
 }
 
-func authenticateNativeBasic(r *http.Request, validate func(string, string) bool, limiter *basicAuthFailureLimiter) (username string, valid bool, rateLimited error) {
+func authenticateNativeBasic(r *http.Request, validate func(string, string) bool, limiter *basicAuthFailureLimiter, trustedProxies []string) (username string, valid bool, rateLimited error) {
 	scheme, username, password, parsed := parseBasicAuthorization(r.Header.Get(fiber.HeaderAuthorization))
 	if scheme != "basic" {
 		return "", false, nil
 	}
-	key := basicAuthHTTPClientKey(r)
+	key := basicAuthHTTPClientKey(r, trustedProxies)
+	if result := limiter.blocked(key); result.blocked {
+		return "", false, basicAuthRateLimitError{retryAfter: result.retryAfter}
+	}
 	if parsed && validate(username, password) {
 		limiter.reset(key)
 		return username, true, nil

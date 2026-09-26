@@ -62,7 +62,10 @@ func restServer(_ *cobra.Command, _ []string) {
 	// Configure proxy settings if trusted proxies are specified
 	if len(config.AppTrustedProxies) > 0 {
 		fiberConfig.TrustProxyConfig = fiber.TrustProxyConfig{Proxies: config.AppTrustedProxies}
-		fiberConfig.ProxyHeader = fiber.HeaderXForwardedHost
+		// Resolve the client IP from X-Forwarded-For only when the immediate
+		// peer is in AppTrustedProxies. X-Forwarded-Host is a host-routing
+		// header, not a client-identity header.
+		fiberConfig.ProxyHeader = fiber.HeaderXForwardedFor
 	}
 
 	app := fiber.New(fiberConfig)
