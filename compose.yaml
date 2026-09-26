@@ -1,0 +1,43 @@
+services:
+  app:
+    image: ${GOWA_IMAGE:?set a tested registry digest}
+    restart: unless-stopped
+    mem_limit: 768m
+    memswap_limit: 896m
+    pids_limit: 128
+    security_opt: [no-new-privileges:true]
+    env_file: [.env]
+    environment:
+      APP_UI_ENABLED: "true"
+      APP_UI_RELEASE_TAG: v1.7.0
+      APP_UI_ASSET_SHA256: cc756087e9cdbabed96abbe283702f549dbb0f14dfb153919b9ec80322d33a8b
+      APP_TRUSTED_PROXIES: 172.19.0.3/32
+      MCP_ENABLED: "true"
+      MCP_STREAMING_ENABLED: "true"
+      MCP_STREAM_PORT: "3001"
+      MCP_DATA_DIR: storages/mcp
+    expose: ["3000", "3001"]
+    volumes:
+      - storages:/app/storages
+      - statics:/app/statics
+    networks: [caddy]
+    labels:
+      caddy: gowa.yusoofsh.id
+      caddy.reverse_proxy: "{{upstreams 3001}}"
+    logging:
+      driver: json-file
+      options: {max-size: 200k, max-file: "10"}
+    healthcheck:
+      test: [CMD-SHELL, 'wget -q -O /dev/null --header "Authorization: Basic $$(echo -n $$APP_BASIC_AUTH | base64)" http://127.0.0.1:3000/app/info']
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+networks:
+  caddy:
+    external: true
+
+volumes:
+  storages: {}
+  statics: {}
