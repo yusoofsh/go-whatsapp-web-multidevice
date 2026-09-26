@@ -10,6 +10,9 @@ services:
       TZ: ${TZ:-Asia/Jakarta}
       APP_BASIC_AUTH: ${APP_BASIC_AUTH:?Set APP_BASIC_AUTH to username:strong-password}
       APP_UI_ENABLED: "true"
+      APP_UI_AUTO_UPDATE: ${APP_UI_AUTO_UPDATE:-true}
+      APP_UI_RELEASE_TAG: ${APP_UI_RELEASE_TAG:-}
+      APP_UI_ASSET_SHA256: ${APP_UI_ASSET_SHA256:-}
       MCP_ENABLED: "true"
       MCP_STREAMING_ENABLED: "true"
       MCP_STREAM_PORT: "3001"

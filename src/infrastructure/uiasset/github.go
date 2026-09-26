@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/sirupsen/logrus"
@@ -32,14 +33,25 @@ type release struct {
 	Assets  []releaseAsset `json:"assets"`
 }
 
+func (m *Manager) releaseLookupURL() string {
+	tag := strings.TrimSpace(m.cfg.ReleaseTag)
+	if tag == "" {
+		return fmt.Sprintf("%s/repos/%s/releases/latest", githubAPIBase, m.cfg.Repo)
+	}
+	return fmt.Sprintf("%s/repos/%s/releases/tags/%s", githubAPIBase, m.cfg.Repo, url.PathEscape(tag))
+}
+
 // EnsureLatest checks the newest GitHub release and downloads the dashboard
 // asset when the cached copy is missing or outdated. It is safe to call
 // concurrently with Content and never leaves a partially written cache.
 func (m *Manager) EnsureLatest(ctx context.Context) error {
+	if err := m.validatePins(); err != nil {
+		return err
+	}
 	current := m.current.Load()
 
-	url := fmt.Sprintf("%s/repos/%s/releases/latest", githubAPIBase, m.cfg.Repo)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	lookupURL := m.releaseLookupURL()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, lookupURL, nil)
 	if err != nil {
 		return err
 	}
@@ -69,6 +81,9 @@ func (m *Manager) EnsureLatest(ctx context.Context) error {
 	if err = json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return fmt.Errorf("decode release: %w", err)
 	}
+	if expectedTag := strings.TrimSpace(m.cfg.ReleaseTag); expectedTag != "" && rel.TagName != expectedTag {
+		return fmt.Errorf("release lookup returned tag %q, expected pinned tag %q", rel.TagName, expectedTag)
+	}
 
 	var asset *releaseAsset
 	for i := range rel.Assets {
@@ -84,9 +99,9 @@ func (m *Manager) EnsureLatest(ctx context.Context) error {
 	etag := resp.Header.Get("ETag")
 	remoteSHA := strings.TrimPrefix(asset.Digest, "sha256:")
 
-	if m.cfg.PinnedSHA256 != "" && remoteSHA != "" && !strings.EqualFold(remoteSHA, m.cfg.PinnedSHA256) {
+	if pinnedSHA := m.pinnedSHA256(); pinnedSHA != "" && remoteSHA != "" && !strings.EqualFold(remoteSHA, pinnedSHA) {
 		return fmt.Errorf("release %s asset digest %s does not match the pinned sha256 %s; refusing to download",
-			rel.TagName, remoteSHA, m.cfg.PinnedSHA256)
+			rel.TagName, remoteSHA, pinnedSHA)
 	}
 
 	if current != nil && remoteSHA != "" && remoteSHA == current.sha256 {
@@ -103,9 +118,9 @@ func (m *Manager) EnsureLatest(ctx context.Context) error {
 	if remoteSHA != "" && downloadedSHA != remoteSHA {
 		return fmt.Errorf("digest mismatch: release says %s, downloaded %s", remoteSHA, downloadedSHA)
 	}
-	if m.cfg.PinnedSHA256 != "" && !strings.EqualFold(downloadedSHA, m.cfg.PinnedSHA256) {
+	if pinnedSHA := m.pinnedSHA256(); pinnedSHA != "" && !strings.EqualFold(downloadedSHA, pinnedSHA) {
 		return fmt.Errorf("downloaded asset sha256 %s does not match the pinned sha256 %s; refusing to serve",
-			downloadedSHA, m.cfg.PinnedSHA256)
+			downloadedSHA, pinnedSHA)
 	}
 
 	if err = m.persist(html, rel.TagName, downloadedSHA, etag); err != nil {

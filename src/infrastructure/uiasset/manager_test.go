@@ -33,7 +33,7 @@ func newFakeGithub(t *testing.T, tag string, asset []byte) *fakeGithub {
 	fake := &fakeGithub{tag: tag, asset: asset, digest: true, etag: `W/"rel-1"`, assetRoute: "/dl/gowa-ui.html"}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/repos/aldinokemal/gowa-ui/releases/latest", func(w http.ResponseWriter, r *http.Request) {
+	releaseHandler := func(w http.ResponseWriter, r *http.Request) {
 		fake.lookups++
 		if r.Header.Get("If-None-Match") == fake.etag {
 			fake.notModked++
@@ -55,7 +55,9 @@ func newFakeGithub(t *testing.T, tag string, asset []byte) *fakeGithub {
 			{"name":"other.txt","browser_download_url":"%s/dl/other.txt"},
 			{"name":"gowa-ui.html",%s"browser_download_url":"%s%s"}
 		]}`, fake.tag, fake.server.URL, digest, fake.server.URL, fake.assetRoute)
-	})
+	}
+	mux.HandleFunc("/repos/aldinokemal/gowa-ui/releases/latest", releaseHandler)
+	mux.HandleFunc("/repos/aldinokemal/gowa-ui/releases/tags/v1.0.0", releaseHandler)
 	mux.HandleFunc("/dl/", func(w http.ResponseWriter, _ *http.Request) {
 		fake.downloads++
 		_, _ = w.Write(fake.asset)
@@ -127,6 +129,31 @@ func TestEnsureLatestSkipsWhenDigestMatches(t *testing.T) {
 	served, _, ok := manager.Content()
 	require.True(t, ok)
 	assert.Equal(t, html, served)
+}
+
+func TestEnsurePinnedReleaseUsesExactTagAndDigest(t *testing.T) {
+	html := []byte("<html>pinned</html>")
+	fake := newFakeGithub(t, "v1.0.0", html)
+	manager := newTestManager(t, fake)
+	manager.cfg.ReleaseTag = "v1.0.0"
+	manager.cfg.PinnedSHA256 = contentSHA(html)
+
+	require.NoError(t, manager.EnsureLatest(context.Background()))
+	served, _, ok := manager.Content()
+	require.True(t, ok)
+	assert.Equal(t, html, served)
+	assert.Equal(t, 1, fake.downloads)
+}
+
+func TestPinnedReleaseRequiresDigest(t *testing.T) {
+	fake := newFakeGithub(t, "v1.0.0", []byte("<html>pinned</html>"))
+	manager := newTestManager(t, fake)
+	manager.cfg.ReleaseTag = "v1.0.0"
+
+	err := manager.EnsureLatest(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires a pinned sha256")
+	assert.Equal(t, 0, fake.downloads)
 }
 
 func TestEnsureLatestRejectsDigestMismatch(t *testing.T) {

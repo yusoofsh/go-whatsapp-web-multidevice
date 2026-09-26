@@ -271,6 +271,7 @@ func registerUIRoute(apiGroup fiber.Router, ctx context.Context) {
 	uiManager := uiasset.New(uiasset.Config{
 		Repo:         config.AppUIRepo,
 		AssetName:    config.AppUIAssetName,
+		ReleaseTag:   config.AppUIReleaseTag,
 		CacheDir:     config.PathUICache,
 		GithubToken:  config.AppUIGithubToken,
 		Interval:     config.AppUIUpdateInterval,
