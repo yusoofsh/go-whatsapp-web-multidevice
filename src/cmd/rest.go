@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -23,7 +22,6 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/middleware"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/websocket"
 	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/basicauth"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/static"
@@ -324,19 +322,6 @@ func newCORSMiddleware() fiber.Handler {
 		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization", middleware.DeviceIDHeader},
 		Next: func(c fiber.Ctx) bool {
 			return oauthAuthorizePath != "" && c.Path() == oauthAuthorizePath
-		},
-	})
-}
-
-func newBasicAuthMiddleware(accounts map[string]string) fiber.Handler {
-	return basicauth.New(basicauth.Config{
-		Authorizer: func(username, password string, _ fiber.Ctx) bool {
-			expectedPassword, ok := accounts[username]
-			if !ok {
-				return false
-			}
-
-			return subtle.ConstantTimeCompare([]byte(password), []byte(expectedPassword)) == 1
 		},
 	})
 }

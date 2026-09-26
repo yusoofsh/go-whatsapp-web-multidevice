@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -110,6 +111,15 @@ func (h *NativeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	principal, err := h.auth(r)
 	if err != nil || principal == "" {
+		if rateLimited, ok := err.(interface{ RetryAfter() time.Duration }); ok {
+			retryAfter := int64((rateLimited.RetryAfter() + time.Second - 1) / time.Second)
+			if retryAfter < 1 {
+				retryAfter = 1
+			}
+			w.Header().Set("Retry-After", strconv.FormatInt(retryAfter, 10))
+			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
+			return
+		}
 		w.Header().Set("WWW-Authenticate", h.challenge)
 		http.Error(w, "Unauthorized", 401)
 		return
