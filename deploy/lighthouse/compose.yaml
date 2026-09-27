@@ -1,6 +1,6 @@
 services:
   app:
-    image: ${GOWA_IMAGE:?set a tested registry digest}
+    image: ${GOWA_IMAGE:-ghcr.io/yusoofsh/go-whatsapp-web-multidevice:latest}
     restart: unless-stopped
     mem_limit: 768m
     memswap_limit: 896m
