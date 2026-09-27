@@ -39,5 +39,5 @@ networks:
     external: true
 
 volumes:
-  storages: {}
-  statics: {}
+  storages:
+  statics:
