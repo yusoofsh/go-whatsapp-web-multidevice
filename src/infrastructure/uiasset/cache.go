@@ -35,6 +35,9 @@ type cacheMeta struct {
 // Air-gapped deployments can pre-seed CacheDir with index.html (+ optional
 // meta.json) and disable auto-update.
 func (m *Manager) LoadCache() error {
+	if err := m.validatePins(); err != nil {
+		return err
+	}
 	html, err := os.ReadFile(filepath.Join(m.cfg.CacheDir, cacheFileName))
 	if err != nil {
 		return err
@@ -46,16 +49,27 @@ func (m *Manager) LoadCache() error {
 		if json.Unmarshal(metaRaw, &meta) == nil && meta.AssetName == m.cfg.AssetName {
 			asset.tag = meta.Tag
 			asset.etag = meta.ETag
+			if expectedTag := strings.TrimSpace(m.cfg.ReleaseTag); expectedTag != "" && meta.Tag != "" && meta.Tag != expectedTag {
+				return fmt.Errorf("cached dashboard release tag %q does not match the pinned release tag %q", meta.Tag, expectedTag)
+			}
 		}
 	}
 
-	if m.cfg.PinnedSHA256 != "" && !strings.EqualFold(asset.sha256, m.cfg.PinnedSHA256) {
+	if pinnedSHA := m.pinnedSHA256(); pinnedSHA != "" && !strings.EqualFold(asset.sha256, pinnedSHA) {
 		return fmt.Errorf("cached dashboard sha256 %s does not match the pinned sha256 %s; refusing to serve",
-			asset.sha256, m.cfg.PinnedSHA256)
+			asset.sha256, pinnedSHA)
 	}
 
 	m.current.Store(&asset)
 	return nil
+}
+
+func isSHA256(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
 }
 
 func (m *Manager) persist(html []byte, tag, sha, etag string) error {

@@ -2,6 +2,8 @@ module github.com/aldinokemal/go-whatsapp-web-multidevice
 
 go 1.26.0
 
+toolchain go1.26.8
+
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/PuerkitoBio/goquery v1.12.0
@@ -24,7 +26,7 @@ require (
 	github.com/valyala/fasthttp v1.72.0
 	go.mau.fi/libsignal v0.2.2
 	go.mau.fi/whatsmeow v0.0.0-20260925162019-b3832c2bd1d1
-	golang.org/x/image v0.44.0
+	golang.org/x/image v0.45.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.53.0
 )

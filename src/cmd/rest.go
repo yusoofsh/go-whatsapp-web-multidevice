@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/subtle"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -23,7 +22,6 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/middleware"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/websocket"
 	"github.com/gofiber/fiber/v3"
-	"github.com/gofiber/fiber/v3/middleware/basicauth"
 	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/gofiber/fiber/v3/middleware/logger"
 	"github.com/gofiber/fiber/v3/middleware/static"
@@ -64,7 +62,10 @@ func restServer(_ *cobra.Command, _ []string) {
 	// Configure proxy settings if trusted proxies are specified
 	if len(config.AppTrustedProxies) > 0 {
 		fiberConfig.TrustProxyConfig = fiber.TrustProxyConfig{Proxies: config.AppTrustedProxies}
-		fiberConfig.ProxyHeader = fiber.HeaderXForwardedHost
+		// Resolve the client IP from X-Forwarded-For only when the immediate
+		// peer is in AppTrustedProxies. X-Forwarded-Host is a host-routing
+		// header, not a client-identity header.
+		fiberConfig.ProxyHeader = fiber.HeaderXForwardedFor
 	}
 
 	app := fiber.New(fiberConfig)
@@ -273,6 +274,7 @@ func registerUIRoute(apiGroup fiber.Router, ctx context.Context) {
 	uiManager := uiasset.New(uiasset.Config{
 		Repo:         config.AppUIRepo,
 		AssetName:    config.AppUIAssetName,
+		ReleaseTag:   config.AppUIReleaseTag,
 		CacheDir:     config.PathUICache,
 		GithubToken:  config.AppUIGithubToken,
 		Interval:     config.AppUIUpdateInterval,
@@ -324,19 +326,6 @@ func newCORSMiddleware() fiber.Handler {
 		AllowHeaders: []string{"Origin", "Content-Type", "Accept", "Authorization", middleware.DeviceIDHeader},
 		Next: func(c fiber.Ctx) bool {
 			return oauthAuthorizePath != "" && c.Path() == oauthAuthorizePath
-		},
-	})
-}
-
-func newBasicAuthMiddleware(accounts map[string]string) fiber.Handler {
-	return basicauth.New(basicauth.Config{
-		Authorizer: func(username, password string, _ fiber.Ctx) bool {
-			expectedPassword, ok := accounts[username]
-			if !ok {
-				return false
-			}
-
-			return subtle.ConstantTimeCompare([]byte(password), []byte(expectedPassword)) == 1
 		},
 	})
 }

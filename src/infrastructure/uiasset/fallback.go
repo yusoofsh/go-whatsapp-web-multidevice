@@ -18,7 +18,7 @@ func FallbackHTML(version, repo string) []byte {
 <main>
 <h1>gowa %s</h1>
 <p>The API is running, but the dashboard has not been downloaded yet.</p>
-<p>gowa fetches the UI from the latest <code>%s</code> release. If this server
+<p>gowa fetches the UI from the configured <code>%s</code> release. If this server
 has no internet access, pre-seed <code>storages/ui/index.html</code> and set
 <code>APP_UI_AUTO_UPDATE=false</code>, or disable the UI with
 <code>APP_UI_ENABLED=false</code>.</p>

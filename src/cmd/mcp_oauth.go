@@ -98,13 +98,25 @@ func registerMcpOAuth(app *fiber.App, dm *whatsapp.DeviceManager) (*mcpoauth.Ser
 		return nil, false, err
 	}
 
+	// Apply the same failed-credential budget to the OAuth authorization form
+	// and the MCP Basic fallback. Bearer access is handled below and never
+	// consumes this Basic-only budget.
+	basicLimiter := newBasicAuthFailureLimiter()
+	authorizePath := strings.TrimRight(config.AppBasePath, "/") + "/oauth/authorize"
+	if strings.HasPrefix(authorizePath, "//") {
+		authorizePath = strings.TrimPrefix(authorizePath, "/")
+	}
+	app.Use(authorizePath, wrapOAuthAuthorizeBasicAuthLimiter(func(c fiber.Ctx) error {
+		return c.Next()
+	}, validateCredential, basicLimiter))
 	oauthServer.RegisterPublic(app)
 
 	var mcpRouter fiber.Router = app
 	if config.AppBasePath != "" {
 		mcpRouter = app.Group(config.AppBasePath)
 	}
-	useMcpOAuthMiddleware(mcpRouter, oauthServer.MCPAuthMiddleware(validateCredential))
+	mcpAuth := oauthServer.MCPAuthMiddleware(validateCredential)
+	useMcpOAuthMiddleware(mcpRouter, wrapMCPBasicAuthLimiter(mcpAuth, validateCredential, basicLimiter))
 	uimcp.Register(mcpRouter, dm, runtimeMcpDeps())
 
 	return oauthServer, true, nil

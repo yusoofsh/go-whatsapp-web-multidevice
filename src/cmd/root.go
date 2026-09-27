@@ -127,6 +127,9 @@ func initEnvConfig() {
 	if envUIAsset := viper.GetString("app_ui_asset_name"); envUIAsset != "" {
 		config.AppUIAssetName = envUIAsset
 	}
+	if envUIReleaseTag := strings.TrimSpace(viper.GetString("app_ui_release_tag")); envUIReleaseTag != "" {
+		config.AppUIReleaseTag = envUIReleaseTag
+	}
 	if viper.GetString("app_ui_update_interval") != "" {
 		if interval := viper.GetDuration("app_ui_update_interval"); interval > 0 {
 			config.AppUIUpdateInterval = interval
@@ -381,6 +384,12 @@ func initFlags() {
 		"ui-asset-name", "",
 		config.AppUIAssetName,
 		`release asset name to download --ui-asset-name <string>`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.AppUIReleaseTag,
+		"ui-release-tag", "",
+		config.AppUIReleaseTag,
+		`optional exact GitHub release tag for the dashboard; pair with --ui-asset-sha256 for deterministic deployment`,
 	)
 	rootCmd.PersistentFlags().DurationVarP(
 		&config.AppUIUpdateInterval,

@@ -7,8 +7,10 @@ package uiasset
 
 import (
 	"context"
+	"fmt"
 	"math/rand/v2"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -20,6 +22,10 @@ type Config struct {
 	Repo string
 	// AssetName is the exact release asset filename to match.
 	AssetName string
+	// ReleaseTag optionally selects one exact GitHub release instead of the
+	// mutable latest release. Pair it with PinnedSHA256 for deterministic
+	// deployment; an unpinned tag is rejected before any download.
+	ReleaseTag string
 	// CacheDir is a writable directory holding index.html + meta.json.
 	CacheDir string
 	// GithubToken optionally authenticates GitHub API calls (rate limits).
@@ -80,4 +86,20 @@ func (m *Manager) StartAutoUpdate(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (m *Manager) validatePins() error {
+	tag := strings.TrimSpace(m.cfg.ReleaseTag)
+	sha := m.pinnedSHA256()
+	if tag != "" && sha == "" {
+		return fmt.Errorf("dashboard release tag %q requires a pinned sha256", tag)
+	}
+	if sha != "" && !isSHA256(sha) {
+		return fmt.Errorf("dashboard pinned sha256 must be exactly 64 hexadecimal characters")
+	}
+	return nil
+}
+
+func (m *Manager) pinnedSHA256() string {
+	return strings.TrimSpace(m.cfg.PinnedSHA256)
 }
