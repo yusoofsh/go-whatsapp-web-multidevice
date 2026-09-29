@@ -20,7 +20,9 @@ services:
     volumes:
       - storages:/app/storages
       - statics:/app/statics
-    networks: [caddy]
+    networks:
+      caddy:
+        ipv4_address: 172.19.0.10
     labels:
       caddy: gowa.yusoofsh.id
       caddy.reverse_proxy: "{{upstreams 3001}}"
