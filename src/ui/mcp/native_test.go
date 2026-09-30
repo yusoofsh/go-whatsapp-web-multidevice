@@ -207,3 +207,14 @@ func TestNativeOriginAuthAndBodyLimit(t *testing.T) {
 	response.Body.Close()
 	require.Equal(t, 413, response.StatusCode)
 }
+
+func TestModernDiscoveryAndSessionlessTools(t *testing.T) {
+	_, srv, _, _ := nativeFixture(t)
+	discovered, _ := nativeRPC(t, srv.Client(), srv.URL, "alice", "", "a", "server/discover", map[string]any{"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": map[string]any{}}})
+	require.Nil(t, discovered["error"])
+	require.Equal(t, "complete", discovered["result"].(map[string]any)["resultType"])
+	tools, headers := nativeRPC(t, srv.Client(), srv.URL, "alice", "", "a", "tools/list", map[string]any{"_meta": map[string]any{"io.modelcontextprotocol/protocolVersion": "2026-07-28", "io.modelcontextprotocol/clientCapabilities": map[string]any{}}})
+	require.Nil(t, tools["error"])
+	require.NotEmpty(t, tools["result"].(map[string]any)["tools"])
+	require.Empty(t, headers.Get("Mcp-Session-Id"))
+}
