@@ -13,6 +13,7 @@ services:
       APP_UI_ASSET_SHA256: cc756087e9cdbabed96abbe283702f549dbb0f14dfb153919b9ec80322d33a8b
       APP_TRUSTED_PROXIES: 172.19.0.3/32
       MCP_ENABLED: "true"
+      MCP_EVENTS_ENABLED: "${MCP_EVENTS_ENABLED:-true}"
       MCP_STREAMING_ENABLED: "true"
       MCP_STREAM_PORT: "3001"
       MCP_DATA_DIR: storages/mcp
