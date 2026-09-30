@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/mcpevents"
+	"github.com/sirupsen/logrus"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,18 +36,21 @@ type nativeSession struct {
 // NativeHandler bypasses Fiber/fasthttp so SSE inherits real cancellation.
 // Authentication is checked on EVERY request; session IDs are not credentials.
 type NativeHandler struct {
-	transport    *server.StreamableHTTPServer
-	mcp          *server.MCPServer
-	resolver     deviceResolver
-	auth         func(*http.Request) (string, error)
-	challenge    string
-	origins      map[string]bool
-	hosts        map[string]bool
-	mu           sync.Mutex
-	initializeMu sync.Mutex
-	sessions     map[string]*nativeSession
-	stop         func()
-	closed       bool
+	events          *mcpevents.Hub
+	eventsCancel    context.CancelFunc
+	modernTransport *server.StreamableHTTPServer
+	transport       *server.StreamableHTTPServer
+	mcp             *server.MCPServer
+	resolver        deviceResolver
+	auth            func(*http.Request) (string, error)
+	challenge       string
+	origins         map[string]bool
+	hosts           map[string]bool
+	mu              sync.Mutex
+	initializeMu    sync.Mutex
+	sessions        map[string]*nativeSession
+	stop            func()
+	closed          bool
 }
 
 func NewNativeHandler(deps Deps, resolver deviceResolver, auth func(*http.Request) (string, error), challenge string, origins []string) *NativeHandler {
@@ -72,6 +78,45 @@ func NewNativeHandler(deps Deps, resolver deviceResolver, auth func(*http.Reques
 	// otherwise reject a legitimate localhost reverse proxy with a public Host.
 	if deps.Data != nil {
 		h.stop = deps.Data.Listen(h.notify)
+	}
+
+	h.modernTransport = server.NewStreamableHTTPServer(h.mcp, server.WithStateLess(true), server.WithDisableStreaming(true), server.WithDisableLocalhostProtection(true))
+	if deps.Data != nil && os.Getenv("MCP_EVENTS_ENABLED") == "true" {
+		path := os.Getenv("MCP_EVENTS_STATE_PATH")
+		if path == "" {
+			path = "storages/mcp-events.enc"
+		}
+		hub, err := mcpevents.Open(path, path+".key", deps.Data, func(s mcpevents.Subscription) bool {
+			req, _ := http.NewRequest(http.MethodPost, "http://localhost/mcp", nil)
+			req.Header.Set("Authorization", s.AuthHeader)
+			owner, err := h.auth(req)
+			if err != nil || owner != s.Owner || h.resolver == nil {
+				return false
+			}
+			d, _, err := h.resolver.ResolveDevice(s.DeviceHeader)
+			return err == nil && d != nil && d.JID() == s.Device
+		})
+		if err != nil {
+			logrus.Error("MCP Events initialization failed; capability disabled")
+		} else {
+			h.events = hub
+			ctx, cancel := context.WithCancel(context.Background())
+			h.eventsCancel = cancel
+			go func() {
+				ticker := time.NewTicker(time.Second)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						if hub.Tick(ctx) != nil {
+							logrus.Warn("MCP Events delivery check failed")
+						}
+					}
+				}
+			}()
+		}
 	}
 	return h
 }
@@ -177,6 +222,38 @@ func (h *NativeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if json.Unmarshal(body, &envelope) == nil {
 			isInitialize = envelope.Method == "initialize"
+			var rpc struct {
+				Params json.RawMessage `json:"params"`
+			}
+			_ = json.Unmarshal(body, &rpc)
+			if envelope.Method == "server/discover" {
+				caps := map[string]any{"tools": map[string]any{}}
+				if h.events != nil {
+					caps["events"] = map[string]any{}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": envelope.ID, "result": map[string]any{"resultType": "complete", "supportedVersions": []string{"2026-07-28"}, "capabilities": caps}})
+				return
+			}
+			if strings.HasPrefix(envelope.Method, "events/") && h.events != nil {
+				deviceHeader := r.Header.Get("X-Device-Id")
+				if d, ok := whatsapp.DeviceFromContext(ctx); ok && d != nil {
+					deviceHeader = d.ID()
+				}
+				result, err := h.events.Handle(ctx, envelope.Method, rpc.Params, identity.principal, identity.device, r.Header.Get("Authorization"), deviceHeader)
+				answer := map[string]any{"jsonrpc": "2.0", "id": envelope.ID, "result": result}
+				if err != nil {
+					delete(answer, "result")
+					if rpcErr, ok := err.(*mcpevents.RPCError); ok {
+						answer["error"] = rpcErr
+					} else {
+						answer["error"] = map[string]any{"code": -32603, "message": "Event operation failed"}
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(answer)
+				return
+			}
 			if envelope.Method == "initialize" {
 				// Serialize admission, not ordinary tools, to enforce a hard session cap.
 				h.initializeMu.Lock()
@@ -200,6 +277,18 @@ func (h *NativeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
+		var version struct {
+			Params struct {
+				Meta map[string]any `json:"_meta"`
+			} `json:"params"`
+		}
+		_ = json.Unmarshal(body, &version)
+		if version.Params.Meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28" || r.Header.Get("MCP-Protocol-Version") == "2026-07-28" {
+			r.Header.Set("MCP-Protocol-Version", "2025-11-25")
+			r.Header.Del("Mcp-Session-Id")
+			h.modernTransport.ServeHTTP(w, r)
+			return
+		}
 	}
 	// The SDK does not validate session IDs on GET. Enforce ownership here
 	// for every non-initialize method, including GET, before opening a stream.
@@ -257,6 +346,9 @@ func (h *NativeHandler) notify(event mcpstore.Event) {
 	}
 }
 func (h *NativeHandler) Close(ctx context.Context) error {
+	if h.eventsCancel != nil {
+		h.eventsCancel()
+	}
 	if h.stop != nil {
 		h.stop()
 	}

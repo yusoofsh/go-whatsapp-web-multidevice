@@ -801,3 +801,7 @@ export CGO_CFLAGS_ALLOW="-Xpreprocessor"
 
 - This project is unofficial and not affiliated with WhatsApp.
 - Use the official WhatsApp Business Platform when you require a supported, production-grade integration.
+
+## MCP Events
+
+See [event catalog, configuration and rollout](docs/mcp-events.md).
