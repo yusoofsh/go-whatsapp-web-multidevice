@@ -195,6 +195,10 @@ const sendSchema = `{
     "minLength": 36,
     "maxLength": 36,
     "description": "Attachment staged by whatsapp_media; replaces the matching media URL and is scoped to this device"
+  },
+  "allow_reshare": {
+    "type": "boolean",
+    "description": "text/image/video: let viewers reshare the status; requires phone status@broadcast (default false)"
   }
   },
   "allOf": [
@@ -480,45 +484,49 @@ const messageSchema = `{
     "message_id"
   ],
   "properties": {
-    "action": {
-      "type": "string",
-      "enum": [
-        "react",
-        "edit",
-        "revoke",
-        "delete",
-        "mark_read",
-        "mark_played",
-        "star",
-        "unstar",
-        "download_media"
-      ],
-      "description": "Operation on an existing message. revoke = delete for everyone (destructive); delete = delete for me only; mark_played sends the played receipt for an incoming audio message; download_media returns private MCP attachment metadata and bytes when MCP data storage is enabled"
-    },
-    "phone": {
-      "type": "string",
-      "description": "Phone number or group JID of the chat containing the message"
-    },
-    "message_id": {
-      "type": "string",
-      "description": "The WhatsApp message ID"
-    },
-    "device_id": {
-      "type": "string",
-      "description": "Act as this device instead of the connection default"
-    },
-    "emoji": {
-      "type": "string",
-      "description": "action=react: emoji to react with; empty string removes the reaction"
-    },
-    "message": {
-      "type": "string",
-      "description": "action=edit: replacement text (works ~15 minutes after send)"
-    },
-    "inline": {
-      "type": "boolean",
-      "description": "download_media: embed image or binary MCP content (default true); false returns a private MCP resource URI"
-    }
+  "action": {
+    "type": "string",
+    "enum": [
+      "react",
+      "edit",
+      "revoke",
+      "delete",
+      "mark_read",
+      "mark_played",
+      "star",
+      "unstar",
+      "download_media"
+    ],
+    "description": "Operation on an existing message. revoke = delete for everyone (destructive); delete = delete for me only; mark_played sends the played receipt for an incoming audio message; download_media returns private MCP attachment metadata and bytes when MCP data storage is enabled"
+  },
+  "phone": {
+    "type": "string",
+    "description": "Phone number or group JID of the chat containing the message"
+  },
+  "message_id": {
+    "type": "string",
+    "description": "The WhatsApp message ID"
+  },
+  "device_id": {
+    "type": "string",
+    "description": "Act as this device instead of the connection default"
+  },
+  "emoji": {
+    "type": "string",
+    "description": "action=react: emoji to react with; empty string removes the reaction"
+  },
+  "message": {
+    "type": "string",
+    "description": "action=edit: replacement text (works ~15 minutes after send)"
+  },
+  "inline": {
+    "type": "boolean",
+    "description": "download_media: embed image or binary MCP content (default true); false returns a private MCP resource URI"
+  },
+  "link": {
+    "type": "string",
+    "description": "action=edit: optional URL; the edit is sent with a rich link preview for it, like send link (appended to message if absent)"
+  }
   },
   "allOf": [
     {
