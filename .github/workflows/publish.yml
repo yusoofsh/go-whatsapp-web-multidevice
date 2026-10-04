@@ -1,36 +1,101 @@
-name: Publish image
+name: Verified image
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: gowa-image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   DOCKER_BUILD_RECORD_UPLOAD: 'false'
 
 jobs:
-  publish:
-    if: github.ref == 'refs/heads/main'
+  test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: src
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: docker/setup-buildx-action@v4.1.0
-      - uses: docker/login-action@v4.2.0
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v7.2.0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: src/go.mod
+          cache-dependency-path: src/go.sum
+      - name: Check merged transport formatting
+        run: test -z "$(gofmt -l ui/mcp/schemas.go ui/mcp/send.go)"
+      - name: Verify module graph and checksums
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+      - run: go test ./...
+      - run: go vet ./...
+      - run: go build -o /tmp/gowa-check .
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository }}:latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@v4.1.0
+      - name: Build candidate once
+        uses: docker/build-push-action@v7.2.0
         with:
           context: .
           file: docker/mcp.Dockerfile
           platforms: linux/amd64
-          push: true
-          tags: ghcr.io/${{ github.repository }}:latest
+          load: true
+          push: false
+          tags: gowa-candidate:test
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=gowa-native
+          cache-to: type=gha,mode=max,scope=gowa-native
+      - name: Verify binary and media tooling as non-root without network or saved sessions
+        run: |
+          docker run --rm --network none --read-only --user 20001:20000 --cap-drop ALL --security-opt no-new-privileges --entrypoint /app/whatsapp gowa-candidate:test --help > /tmp/gowa-help.txt
+          grep -F rest /tmp/gowa-help.txt
+          docker run --rm --network none --read-only --user 20001:20000 --cap-drop ALL --security-opt no-new-privileges --entrypoint ffmpeg gowa-candidate:test -version > /tmp/gowa-ffmpeg.txt
+          grep -F 'ffmpeg version' /tmp/gowa-ffmpeg.txt
+      - name: Verify image source revision
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          revision=$(docker image inspect gowa-candidate:test --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')
+          test "$revision" = "$SOURCE_SHA"
+          printf 'Verified image source: `%s`\n' "$revision" >> "$GITHUB_STEP_SUMMARY"
+      - uses: docker/login-action@v4.2.0
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the tested current-main image only
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          test "$current" = "$SOURCE_SHA"
+          docker tag gowa-candidate:test "$IMAGE"
+          docker push "$IMAGE"
