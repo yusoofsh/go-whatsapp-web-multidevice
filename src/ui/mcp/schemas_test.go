@@ -88,6 +88,10 @@ func TestSchemas(t *testing.T) {
 
 		// ---- whatsapp_chat ----
 		{"chat list_chats ok", chatSchema, `{"action":"list_chats","limit":10,"search":"bob"}`, false},
+		{"chat list_chats max limit ok", chatSchema, `{"action":"list_chats","limit":100}`, false},
+		{"chat list_chats limit too large", chatSchema, `{"action":"list_chats","limit":1000}`, true},
+		{"chat list_chats limit zero", chatSchema, `{"action":"list_chats","limit":0}`, true},
+		{"chat list_chats negative offset", chatSchema, `{"action":"list_chats","offset":-1}`, true},
 		{"chat list_contacts ok", chatSchema, `{"action":"list_contacts"}`, false},
 		{"chat get_messages ok", chatSchema, `{"action":"get_messages","chat_jid":"628@s.whatsapp.net","media_only":true}`, false},
 		{"chat get_messages missing jid", chatSchema, `{"action":"get_messages"}`, true},
