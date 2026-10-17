@@ -365,13 +365,10 @@ func TestNativePerCallOverrideDoesNotRetargetSubscription(t *testing.T) {
 	require.Equal(t, 404, bad.StatusCode)
 }
 func TestExportParitySchemas(t *testing.T) {
-	path := os.Getenv("GOWA_SCHEMA_EXPORT")
-	if path == "" {
-		t.Skip("schema export is opt-in during packaging")
+	raw := exportParityCatalog(t)
+	if path := os.Getenv("GOWA_SCHEMA_EXPORT"); path != "" {
+		require.NoError(t, os.WriteFile(path, raw, 0644))
+		return
 	}
-	s := newParityTestSuite(t)
-	result := invokeData(t, s.s, s.ctx, "tools/list", map[string]any{})
-	raw, err := json.MarshalIndent(result["result"], "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(path, append(raw, '\n'), 0644))
+	requirePublishedCatalogMatch(t, raw)
 }
