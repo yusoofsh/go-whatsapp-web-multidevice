@@ -4,13 +4,11 @@ import "time"
 
 // Chat represents a WhatsApp chat/conversation
 type Chat struct {
-	DeviceID        string    `db:"device_id"`
-	JID             string    `db:"jid"`
-	Name            string    `db:"name"`
-	LastMessageTime time.Time `db:"last_message_time"`
-	// EphemeralExpiration is the disappearing-messages timer in seconds; 0 is off.
-	// StoreChat writes it over a stored chat only after SetEphemeralExpiration.
-	EphemeralExpiration uint32    `db:"ephemeral_expiration"`
+	DeviceID            string    `db:"device_id"`
+	JID                 string    `db:"jid"`
+	Name                string    `db:"name"`
+	LastMessageTime     time.Time `db:"last_message_time"`
+	EphemeralExpiration uint32    `db:"ephemeral_expiration"` // Seconds, 0 is off. StoreChat updates it only after SetEphemeralExpiration.
 	CreatedAt           time.Time `db:"created_at"`
 	UpdatedAt           time.Time `db:"updated_at"`
 	Archived            bool      `db:"archived"`

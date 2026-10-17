@@ -44,8 +44,8 @@ func storedChat(t *testing.T, repo *SQLiteRepository, jid string) *domainChatSto
 	return chat
 }
 
-// Replays the write history sync made before 00efd36: an on-demand chunk older
-// than the stored chat, with EphemeralExpiration 0 because it reports no timer.
+// An on-demand history chunk is older than the stored chat and reports no
+// timer, so the chat it builds carries EphemeralExpiration 0.
 func TestStoreChatReplayZeroKeepsStoredTimerAndNewerTime(t *testing.T) {
 	repo := newTestSQLiteRepository(t)
 	newer := time.Date(2026, time.September, 6, 12, 0, 0, 0, time.UTC)
@@ -99,7 +99,7 @@ func TestStoreChatExplicitZero(t *testing.T) {
 	}
 }
 
-// 234811c: a replay must keep the stored group name, not write "Group <id>".
+// A replay must keep the stored group name, not write "Group <id>".
 func TestStoreChatReplayKeepsGroupName(t *testing.T) {
 	repo := newTestSQLiteRepository(t)
 	groupJID := types.NewJID("120363000000000001", types.GroupServer)
