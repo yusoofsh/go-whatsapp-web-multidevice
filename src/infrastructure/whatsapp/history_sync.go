@@ -129,9 +129,6 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 		// Get or create chat
 		chatName := chatStorageRepo.GetChatNameWithPushName(jid, chatJID, "", displayName)
 
-		// Extract ephemeral expiration from conversation
-		ephemeralExpiration := conv.GetEphemeralExpiration()
-
 		// Process messages in the conversation
 		messages := conv.GetMessages()
 		log.Debugf("Processing %d messages for chat %s", len(messages), chatJID)
@@ -294,34 +291,27 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 		// Store or update the chat with latest message time
 		if len(messageBatch) > 0 {
 			chat := &domainChatStorage.Chat{
-				DeviceID:            deviceID,
-				JID:                 chatJID,
-				Name:                chatName,
-				LastMessageTime:     latestTimestamp,
-				EphemeralExpiration: ephemeralExpiration,
+				DeviceID:        deviceID,
+				JID:             chatJID,
+				Name:            chatName,
+				LastMessageTime: latestTimestamp,
 			}
 
 			storeChat := true
 			if data.GetSyncType() == waHistorySync.HistorySync_ON_DEMAND {
-				// ON_DEMAND delivers messages older than the local anchor, so its
-				// batch timestamp must never move the chat's activity time backward
-				// or clobber flags (e.g. archived) that live history didn't touch.
+				// ON_DEMAND delivers messages older than the local anchor, so it
+				// must not clobber flags (e.g. archived) that live history didn't
+				// touch, and any timer it carries is not the current setting.
 				// If the current state cannot be read, leave the chat row alone.
 				if existing, err := chatStorageRepo.GetChatByDevice(deviceID, chatJID); err != nil {
 					log.Warnf("Failed to load existing chat %s for on-demand merge, keeping stored metadata: %v", chatJID, err)
 					storeChat = false
 				} else if existing != nil {
-					if existing.LastMessageTime.After(chat.LastMessageTime) {
-						chat.LastMessageTime = existing.LastMessageTime
-					}
 					chat.Archived = existing.Archived
-					// An on-demand chunk carries no ephemeral setting, so a zero
-					// here means "not reported", not "disappearing messages off".
-					// Same rule the live message path uses.
-					if chat.EphemeralExpiration == 0 {
-						chat.EphemeralExpiration = existing.EphemeralExpiration
-					}
 				}
+			} else if conv.EphemeralExpiration != nil {
+				// A conversation that omits the field has not reported the timer.
+				chat.SetEphemeralExpiration(conv.GetEphemeralExpiration())
 			}
 
 			// Store or update the chat
