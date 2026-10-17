@@ -976,6 +976,10 @@
             "description": "download_media: embed image or binary MCP content (default true); false returns a private MCP resource URI",
             "type": "boolean"
           },
+          "link": {
+            "description": "action=edit: optional URL; the edit is sent with a rich link preview for it, like send link (appended to message if absent)",
+            "type": "string"
+          },
           "message": {
             "description": "action=edit: replacement text (works ~15 minutes after send)",
             "type": "string"
@@ -1857,6 +1861,10 @@
           }
         ],
         "properties": {
+          "allow_reshare": {
+            "description": "text/image/video: let viewers reshare the status; requires phone status@broadcast (default false)",
+            "type": "boolean"
+          },
           "audio_url": {
             "description": "type=audio: URL of the audio file (fetched server-side)",
             "type": "string"
