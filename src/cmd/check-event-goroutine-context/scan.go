@@ -30,6 +30,9 @@ func scan(dir string) ([]hit, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("%s has no event_*.go files", dir)
+	}
 	sort.Strings(matches)
 
 	var hits []hit

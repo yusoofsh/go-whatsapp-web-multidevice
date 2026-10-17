@@ -107,3 +107,9 @@ func TestScanMissingDir(t *testing.T) {
 		t.Fatal("expected an error for a missing directory")
 	}
 }
+
+func TestScanEmptyDir(t *testing.T) {
+	if _, err := scan(t.TempDir()); err == nil {
+		t.Fatal("expected an error when the directory has no event_*.go files")
+	}
+}
