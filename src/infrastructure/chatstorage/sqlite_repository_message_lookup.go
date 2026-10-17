@@ -12,9 +12,7 @@ import (
 // another conversation on the same device.
 func (r *SQLiteRepository) GetMessageByIDChatAndDevice(deviceID, chatJID, id string) (*domainChatStorage.Message, error) {
 	query := `
-		SELECT id, chat_jid, device_id, sender, content, timestamp, is_from_me,
-			media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
-			file_enc_sha256, file_length, referral_metadata, context_metadata, created_at, updated_at
+		SELECT ` + messageColumns + `
 		FROM messages
 		WHERE id = ? AND chat_jid = ? AND device_id = ?
 		LIMIT 1
@@ -39,9 +37,7 @@ func (r *SQLiteRepository) GetMessageByIDChatAndDevice(deviceID, chatJID, id str
 // produce an invalid oldest_msg_id.
 func (r *SQLiteRepository) GetOldestMessageByDevice(deviceID, chatJID string) (*domainChatStorage.Message, error) {
 	query := `
-		SELECT id, chat_jid, device_id, sender, content, timestamp, is_from_me,
-			media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
-			file_enc_sha256, file_length, referral_metadata, context_metadata, created_at, updated_at
+		SELECT ` + messageColumns + `
 		FROM messages
 		WHERE chat_jid = ? AND device_id = ? AND (media_type IS NULL OR media_type != 'call')
 		ORDER BY timestamp ASC, id ASC
