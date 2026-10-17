@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-var messageColumnListPattern = regexp.MustCompile(`(?s)id\s*,\s*chat_jid\s*,\s*device_id\s*,\s*sender\s*,\s*content\s*,\s*timestamp\s*,\s*is_from_me\b(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)+`)
+var messageColumnListPattern = regexp.MustCompile(`(?s)\bid\s*,\s*chat_jid\s*,\s*device_id\s*,\s*sender\s*,\s*content\s*,\s*timestamp\s*,\s*is_from_me\b(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)+`)
 
-var archiveUsesMessageColumns = regexp.MustCompile(`const\s+archiveColumns\s*=\s*messageColumns\b`)
+var archiveUsesMessageColumns = regexp.MustCompile(`(?m)^const\s+archiveColumns\s*=\s*messageColumns\s*$`)
 
 func TestArchiveAndMessageColumnListsMatch(t *testing.T) {
 	_, caller, _, ok := runtime.Caller(0)
