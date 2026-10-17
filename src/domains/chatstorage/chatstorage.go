@@ -8,10 +8,23 @@ type Chat struct {
 	JID                 string    `db:"jid"`
 	Name                string    `db:"name"`
 	LastMessageTime     time.Time `db:"last_message_time"`
-	EphemeralExpiration uint32    `db:"ephemeral_expiration"`
+	EphemeralExpiration uint32    `db:"ephemeral_expiration"` // Seconds, 0 is off. StoreChat updates it only after SetEphemeralExpiration.
 	CreatedAt           time.Time `db:"created_at"`
 	UpdatedAt           time.Time `db:"updated_at"`
 	Archived            bool      `db:"archived"`
+
+	ephemeralExpirationSet bool
+}
+
+// SetEphemeralExpiration records a timer the caller knows, including 0 for off.
+func (c *Chat) SetEphemeralExpiration(seconds uint32) {
+	c.EphemeralExpiration = seconds
+	c.ephemeralExpirationSet = true
+}
+
+// EphemeralExpirationSet reports whether SetEphemeralExpiration was called.
+func (c *Chat) EphemeralExpirationSet() bool {
+	return c.ephemeralExpirationSet
 }
 
 // Message represents a WhatsApp message

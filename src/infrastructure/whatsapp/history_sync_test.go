@@ -168,9 +168,9 @@ func TestProcessHistorySyncRoutesOnDemandToConversationMessages(t *testing.T) {
 
 // TestProcessConversationMessagesOnDemandPreservesNewerChatMetadata pins the
 // on-demand chat-metadata regression: HISTORY_SYNC_ON_DEMAND carries messages
-// older than the local anchor, so its batch timestamp must never move an
-// already-newer LastMessageTime backward, unarchive an archived chat, nor
-// clear the disappearing-messages timer the chunk does not report.
+// older than the local anchor, so it must not unarchive an archived chat nor
+// set the disappearing-messages timer, even when the chunk encodes a 0.
+// StoreChat keeps the newer LastMessageTime.
 func TestProcessConversationMessagesOnDemandPreservesNewerChatMetadata(t *testing.T) {
 	originalLog := log
 	log = waLog.Noop
@@ -194,7 +194,8 @@ func TestProcessConversationMessagesOnDemandPreservesNewerChatMetadata(t *testin
 	data := &waHistorySync.HistorySync{
 		SyncType: &syncType,
 		Conversations: []*waHistorySync.Conversation{{
-			ID: proto.String(chatJID),
+			ID:                  proto.String(chatJID),
+			EphemeralExpiration: proto.Uint32(0),
 			Messages: []*waHistorySync.HistorySyncMsg{{Message: &waWeb.WebMessageInfo{
 				Key: &waCommon.MessageKey{
 					RemoteJID: proto.String(chatJID),
@@ -214,14 +215,62 @@ func TestProcessConversationMessagesOnDemandPreservesNewerChatMetadata(t *testin
 	if repo.lastStoredChat == nil {
 		t.Fatal("expected chat to be stored")
 	}
-	if !repo.lastStoredChat.LastMessageTime.Equal(existingLastMessageTime) {
-		t.Fatalf("expected LastMessageTime to stay at %s, got %s", existingLastMessageTime, repo.lastStoredChat.LastMessageTime)
-	}
 	if !repo.lastStoredChat.Archived {
 		t.Fatal("expected Archived to remain true after on-demand sync")
 	}
-	if repo.lastStoredChat.EphemeralExpiration != 604800 {
-		t.Fatalf("expected EphemeralExpiration to stay at 604800, got %d", repo.lastStoredChat.EphemeralExpiration)
+	if repo.lastStoredChat.EphemeralExpirationSet() {
+		t.Fatalf("on-demand sync set the timer to %d", repo.lastStoredChat.EphemeralExpiration)
+	}
+}
+
+func TestProcessConversationMessagesSetsTimerOnlyWhenReported(t *testing.T) {
+	originalLog := log
+	log = waLog.Noop
+	defer func() { log = originalLog }()
+
+	deviceID := "device-a@s.whatsapp.net"
+	chatJID := "628123456789@s.whatsapp.net"
+	timestamp := uint64(time.Date(2026, time.September, 6, 8, 0, 0, 0, time.UTC).Unix())
+	cases := []struct {
+		name     string
+		reported *uint32
+		wantSet  bool
+	}{
+		{name: "reported week", reported: proto.Uint32(604800), wantSet: true},
+		{name: "reported off", reported: proto.Uint32(0), wantSet: true},
+		{name: "omitted", reported: nil, wantSet: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &historyMessageBatchRepoSpy{}
+			ctx := ContextWithDevice(context.Background(), NewDeviceInstance(deviceID, nil, nil))
+			syncType := waHistorySync.HistorySync_RECENT
+			data := &waHistorySync.HistorySync{
+				SyncType: &syncType,
+				Conversations: []*waHistorySync.Conversation{{
+					ID:                  proto.String(chatJID),
+					EphemeralExpiration: tc.reported,
+					Messages: []*waHistorySync.HistorySyncMsg{{Message: &waWeb.WebMessageInfo{
+						Key:              &waCommon.MessageKey{RemoteJID: proto.String(chatJID), FromMe: proto.Bool(false), ID: proto.String("recent-1")},
+						Message:          &waE2E.Message{Conversation: proto.String("recent message")},
+						MessageTimestamp: &timestamp,
+					}}},
+				}},
+			}
+
+			if err := processConversationMessages(ctx, data, repo, nil); err != nil {
+				t.Fatalf("processConversationMessages: %v", err)
+			}
+			if repo.lastStoredChat == nil {
+				t.Fatal("expected chat to be stored")
+			}
+			if got := repo.lastStoredChat.EphemeralExpirationSet(); got != tc.wantSet {
+				t.Fatalf("EphemeralExpirationSet() = %v, want %v", got, tc.wantSet)
+			}
+			if tc.wantSet && repo.lastStoredChat.EphemeralExpiration != *tc.reported {
+				t.Fatalf("EphemeralExpiration = %d, want %d", repo.lastStoredChat.EphemeralExpiration, *tc.reported)
+			}
+		})
 	}
 }
 

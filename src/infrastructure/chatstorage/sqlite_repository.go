@@ -30,28 +30,57 @@ func NewStorageRepository(db *sql.DB) domainChatStorage.IChatStorageRepository {
 	return &SQLiteRepository{db: db}
 }
 
-// StoreChat creates or updates a chat
+// StoreChat creates or updates a chat. An update never moves LastMessageTime
+// backward and keeps the stored timer unless the caller used
+// SetEphemeralExpiration.
 func (r *SQLiteRepository) StoreChat(chat *domainChatStorage.Chat) error {
 	now := time.Now()
 	chat.UpdatedAt = now
 
-	// Try update first, then insert if no rows affected (cross-db compatible)
-	result, err := r.db.Exec(`
-		UPDATE chats SET name = ?, last_message_time = ?, ephemeral_expiration = ?, updated_at = ?, archived = ?
+	tx, err := r.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Write before reading: a WAL transaction that reads first fails with
+	// SQLITE_BUSY instead of waiting when another connection commits in between.
+	result, err := tx.Exec(`
+		UPDATE chats SET name = ?,
+			ephemeral_expiration = CASE WHEN ? THEN ? ELSE ephemeral_expiration END,
+			updated_at = ?, archived = ?
 		WHERE jid = ? AND device_id = ?
-	`, chat.Name, chat.LastMessageTime, chat.EphemeralExpiration, chat.UpdatedAt, chat.Archived, chat.JID, chat.DeviceID)
+	`, chat.Name, chat.EphemeralExpirationSet(), chat.EphemeralExpiration, chat.UpdatedAt, chat.Archived, chat.JID, chat.DeviceID)
 	if err != nil {
 		return err
 	}
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		_, err = r.db.Exec(`
+		_, err = tx.Exec(`
 			INSERT INTO chats (jid, device_id, name, last_message_time, ephemeral_expiration, created_at, updated_at, archived)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		`, chat.JID, chat.DeviceID, chat.Name, chat.LastMessageTime, chat.EphemeralExpiration, now, chat.UpdatedAt, chat.Archived)
+		if err != nil {
+			return err
+		}
+		return tx.Commit()
 	}
-	return err
+
+	var storedLastMessageTime time.Time
+	if err = tx.QueryRow(`
+		SELECT last_message_time FROM chats WHERE jid = ? AND device_id = ?
+	`, chat.JID, chat.DeviceID).Scan(&storedLastMessageTime); err != nil {
+		return err
+	}
+	if chat.LastMessageTime.After(storedLastMessageTime) {
+		if _, err = tx.Exec(`
+			UPDATE chats SET last_message_time = ? WHERE jid = ? AND device_id = ?
+		`, chat.LastMessageTime, chat.JID, chat.DeviceID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // GetChat retrieves a chat by JID
@@ -2207,7 +2236,7 @@ func (r *SQLiteRepository) CreateMessage(ctx context.Context, evt *events.Messag
 	// Get appropriate chat name using pushname if available (device-scoped)
 	chatName := r.GetChatNameWithPushNameByDevice(deviceID, normalizedChatJID, chatJID, chatNameSenderUser, chatNamePushName)
 
-	// Get existing chat to preserve ephemeral_expiration and archived status if needed (device-scoped)
+	// Get existing chat to preserve archived status if needed (device-scoped)
 	existingChat, err := r.GetChatByDevice(deviceID, chatJID)
 	if err != nil {
 		return fmt.Errorf("failed to get existing chat: %w", err)
@@ -2243,12 +2272,9 @@ func (r *SQLiteRepository) CreateMessage(ctx context.Context, evt *events.Messag
 		LastMessageTime: evt.Info.Timestamp,
 	}
 
-	// Set ephemeral expiration: use incoming message value if > 0, otherwise preserve existing
+	// A message without an expiration does not mean the timer is off.
 	if ephemeralExpiration > 0 {
-		chat.EphemeralExpiration = ephemeralExpiration
-	} else if existingChat != nil {
-		// Preserve existing ephemeral_expiration if incoming message doesn't have one
-		chat.EphemeralExpiration = existingChat.EphemeralExpiration
+		chat.SetEphemeralExpiration(ephemeralExpiration)
 	}
 
 	// Preserve existing archived state
@@ -2605,7 +2631,6 @@ func (r *SQLiteRepository) CreateIncomingCallRecord(ctx context.Context, evt *ev
 		LastMessageTime: evt.Timestamp,
 	}
 	if existingChat != nil {
-		chat.EphemeralExpiration = existingChat.EphemeralExpiration
 		chat.Archived = existingChat.Archived
 	}
 	if err := r.StoreChat(chat); err != nil {
@@ -2785,13 +2810,12 @@ func (r *SQLiteRepository) StoreSentMessageWithContext(ctx context.Context, mess
 	// Get chat name (no pushname available for sent messages) - device scoped
 	chatName := r.GetChatNameWithPushNameByDevice(deviceID, normalizedJID, chatJID, normalizedJID.User, "")
 
-	// Get existing chat to preserve ephemeral_expiration and archived status (device-scoped)
+	// Get existing chat to preserve archived status (device-scoped)
 	existingChat, err := r.GetChatByDevice(deviceID, chatJID)
 	if err != nil {
 		return fmt.Errorf("failed to get existing chat: %w", err)
 	}
 
-	// Store or update chat, preserving existing ephemeral_expiration
 	chat := &domainChatStorage.Chat{
 		DeviceID:        deviceID,
 		JID:             chatJID,
@@ -2799,9 +2823,8 @@ func (r *SQLiteRepository) StoreSentMessageWithContext(ctx context.Context, mess
 		LastMessageTime: timestamp,
 	}
 
-	// Preserve existing ephemeral_expiration and archived state if chat exists
+	// Preserve existing archived state if chat exists
 	if existingChat != nil {
-		chat.EphemeralExpiration = existingChat.EphemeralExpiration
 		chat.Archived = existingChat.Archived
 	}
 	if err := r.StoreChat(chat); err != nil {
