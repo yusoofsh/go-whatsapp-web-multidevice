@@ -31,19 +31,25 @@ enabled; both transports share the same device manager and usecases.
 - Chatwoot routing, live sync, and history: [Chatwoot infrastructure](src/infrastructure/chatwoot/AGENTS.md).
   Setup or routing-mode changes: [configuration](docs/chatwoot.md).
   Direct Postgres changes: [scoped guide](src/infrastructure/chatwoot/pgimport/AGENTS.md).
-- Embedded browser UI: `src/views/components/` and `src/views/index.html`. These are
-  plain Vue 3 modules loaded from CDN, with Fomantic UI and `[[`, `]]` delimiters.
+- Browser UI: `src/infrastructure/uiasset` downloads the dashboard HTML and
+  serves the cached copy.
 - Startup and configuration: `src/cmd/root.go`, `src/cmd/rest.go`,
   `src/cmd/helpers.go`, `src/config/settings.go`, and `src/.env.example`. Configuration
   and service wiring use package globals; flags override env/Viper and `.env` defaults.
-- Packaging: `docker/golang.Dockerfile`, `docker/entrypoint.sh`, and `.github/workflows/`.
-  Read toolchain versions from those files and `src/go.mod`. `AppVersion` is a source
-  constant in `src/config/settings.go`; release builds do not inject it with ldflags.
-  Release jobs require a pushed tag and generate GoReleaser configuration in `/tmp`;
-  there is no committed `.goreleaser.yml`. Docker image publication is tag/manual driven.
-- Publishing a stable release: use [new-release](.agents/skills/new-release/SKILL.md)
-  only when explicitly invoked. For an existing release's notes, use
-  [update-release-note](.agents/skills/update-release-note/SKILL.md).
+- Packaging: read toolchain versions from `docker/mcp.Dockerfile`,
+  `docker/golang.Dockerfile`, `docker/entrypoint.sh`, and `src/go.mod`.
+  `AppVersion` is the constant in `src/config/settings.go`. Image builds pass
+  `-ldflags='-w -s'`.
+- Image publish: `.github/workflows/publish.yml` runs on a push to `main`, on a
+  pull request to `main`, and on `workflow_dispatch`. The `test` job runs
+  `gofmt -l`, `go run ./cmd/check-event-goroutine-context ./infrastructure/whatsapp`,
+  `go mod tidy`, `git diff --exit-code -- go.mod go.sum`, `go test -race ./...`,
+  `go vet ./...`, and `go build`. The `publish` job builds `linux/amd64` from
+  `docker/mcp.Dockerfile`, then checks `--help`, `ffmpeg version`, and
+  `org.opencontainers.image.revision`. On every push to `main`, that job pushes
+  `ghcr.io/${{ github.repository }}:latest` after the checks pass and `main`
+  still names that commit. A pull request runs the same checks and leaves the
+  registry unchanged. `workflow_dispatch` on `main` also pushes that tag.
 
 ## Cross-layer contracts
 
@@ -62,17 +68,22 @@ enabled; both transports share the same device manager and usecases.
 Run Go commands from `src/`; select checks for the affected behavior:
 
 ```sh
+gofmt -l .
+go run ./cmd/check-event-goroutine-context ./infrastructure/whatsapp
 go test ./path/to/affected/package/...
 go test ./...
+go test -race ./...
 go vet ./...
 go build -o whatsapp .
 ```
 
 Choose checks for the changed behavior. Use the full suite for shared contracts,
-startup, or broad changes. After relevant checks pass, repeat or broaden them only
-for new edits, failures, or unresolved risks. For Markdown-only changes, check the
-diff and references; application tests are unnecessary. Report checks actually run
-and any unverified behavior.
+startup, or broad changes. CI runs `go test -race ./...` from `src/` in
+`.github/workflows/publish.yml`. After relevant checks pass, repeat or broaden
+them only for new edits, failures, or unresolved risks. For Markdown-only
+changes, check the diff and references; application tests are unnecessary.
+After you edit an `AGENTS.md` file, run `scripts/check-agents-guide.sh` from
+the repository root. Report checks actually run and any unverified behavior.
 Default SQLite builds use CGO; `-tags purego` selects `modernc.org/sqlite` when that
 build variant is relevant. Run `go mod tidy` when changing dependencies.
 
