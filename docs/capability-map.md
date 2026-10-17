@@ -52,7 +52,7 @@ Credentials remain administrative, not per-user device ACLs. Device management c
 
 ## Verification
 
-The integration gate runs the full Go suite, vet, race tests and native build, then exports the actual registered schemas to `mcp-tools.json`. Existing GHCR publication separately tests both native architectures and the real OAuth/PKCE/MCP HTTP handshake. Mock dispatch is distinguished from live WhatsApp acceptance; live delivery, phone history, channel permissions and long-running reliability are unverified.
+The `test` job in `.github/workflows/publish.yml` runs `gofmt -l`, `go run ./cmd/check-event-goroutine-context ./infrastructure/whatsapp`, `go mod tidy`, `git diff --exit-code -- go.mod go.sum`, `go test -race ./...`, `go vet ./...`, and `go build -o /tmp/gowa-check .`. The `publish` job builds `linux/amd64` from `docker/mcp.Dockerfile`, checks `--help` for `rest`, checks `ffmpeg version`, and checks `org.opencontainers.image.revision`. A push to `main` pushes `ghcr.io/${{ github.repository }}:latest`. Mock dispatch is distinguished from live WhatsApp acceptance; live delivery, phone history, channel permissions and long-running reliability are unverified.
 
 See `composio-schema-migration.md` for exact connector changes. Existing deployments and the external `custom_gowa` catalog are not altered merely by publishing a new image.
 

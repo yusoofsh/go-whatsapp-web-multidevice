@@ -17,6 +17,7 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	uimcp "github.com/aldinokemal/go-whatsapp-web-multidevice/ui/mcp"
+	mcpoauth "github.com/aldinokemal/go-whatsapp-web-multidevice/ui/mcp/oauth"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/helpers"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/ui/rest/middleware"
@@ -54,6 +55,78 @@ func restServer(_ *cobra.Command, _ []string) {
 			mcpData = nil
 		}
 	}()
+
+	dm := whatsapp.GetDeviceManager()
+	if config.ChatwootEnabled {
+		// Auto-provision the inbox, install the per-device client registry, then
+		// start the retry worker (registry before worker — see initChatwootForwarding).
+		initChatwootForwarding(chatStorageRepo)
+	}
+
+	app, oauthServer, cleanup, err := buildRESTApp(dm)
+	if err != nil {
+		logrus.Fatalln("Failed to initialize MCP OAuth: ", err.Error())
+	}
+	defer cleanup()
+
+	stopMCP, err := startNativeMcpGateway(dm, oauthServer)
+	if err != nil {
+		logrus.Fatalln("Native MCP startup: ", err)
+	}
+	defer stopMCP()
+	go websocket.RunHub()
+
+	// Set auto reconnect to whatsapp server after booting
+	go helpers.SetAutoConnectAfterBooting(appUsecase)
+
+	// Set auto reconnect checking with a guaranteed client instance
+	startAutoReconnectCheckerIfClientAvailable()
+
+	// Set daily presence pulse scheduler when enabled
+	startPresencePulseSchedulerIfEnabled()
+
+	// Listen in a goroutine so we can trap SIGINT/SIGTERM and drain the
+	// server cleanly. Without this, Fiber's Listen blocks until the OS
+	// kills the process, leaking the Chatwoot Postgres importer pool and
+	// the chat storage DB connection.
+	listenErr := make(chan error, 1)
+	go func() {
+		listenErr <- app.Listen(config.AppHost+":"+config.AppPort, fiber.ListenConfig{ListenerNetwork: "tcp"})
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-listenErr:
+		if err != nil {
+			logrus.Fatalln("Failed to start: ", err.Error())
+		}
+	case sig := <-sigCh:
+		logrus.Infof("Received %s — shutting down", sig)
+		stopMCP()
+		if scheduleStop != nil {
+			scheduleStop()
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := app.ShutdownWithContext(shutdownCtx); err != nil {
+			logrus.Warnf("HTTP server shutdown: %v", err)
+		}
+		// Release any Chatwoot direct-Postgres importer pools opened by per-device
+		// sync services. Safe when Chatwoot is disabled or none were initialized.
+		if err := chatwoot.CloseAllSyncServices(); err != nil {
+			logrus.Warnf("Chatwoot sync close: %v", err)
+		}
+		if chatStorageDB != nil {
+			if err := chatStorageDB.Close(); err != nil {
+				logrus.Warnf("Chat storage close: %v", err)
+			}
+		}
+	}
+}
+
+func buildRESTApp(dm *whatsapp.DeviceManager) (*fiber.App, *mcpoauth.Server, func(), error) {
 	fiberConfig := fiber.Config{
 		TrustProxy: true,
 		BodyLimit:  int(config.WhatsappSettingMaxVideoSize),
@@ -82,9 +155,6 @@ func restServer(_ *cobra.Command, _ []string) {
 		app.Use(logger.New())
 	}
 
-	// Device manager - needed for chatwoot webhook and health check
-	dm := whatsapp.GetDeviceManager()
-
 	// Health check endpoint (public, no auth)
 	// Registered at root path (ignoring AppBasePath) to ensure fixed availability
 	// for infrastructure health probes (Kubernetes liveness/readiness, Docker healthcheck, etc.)
@@ -100,10 +170,6 @@ func restServer(_ *cobra.Command, _ []string) {
 	// is stateless and shared with the authenticated sync routes registered below.
 	var chatwootHandler *rest.ChatwootHandler
 	if config.ChatwootEnabled {
-		// Auto-provision the inbox, install the per-device client registry, then
-		// start the retry worker (registry before worker — see initChatwootForwarding).
-		initChatwootForwarding(chatStorageRepo)
-
 		chatwootHandler = rest.NewChatwootHandler(appUsecase, sendUsecase, messageUsecase, dm, chatStorageRepo)
 		webhookPath := "/chatwoot/webhook"
 		if config.AppBasePath != "" {
@@ -120,14 +186,7 @@ func restServer(_ *cobra.Command, _ []string) {
 	// this is a no-op and MCP is mounted in its historical location below.
 	oauthServer, mcpOAuthRegistered, err := registerMcpOAuth(app, dm)
 	if err != nil {
-		logrus.Fatalln("Failed to initialize MCP OAuth: ", err.Error())
-	}
-	if oauthServer != nil {
-		defer func() {
-			if err := oauthServer.Close(); err != nil {
-				logrus.Warnf("MCP OAuth storage close: %v", err)
-			}
-		}()
+		return nil, nil, nil, err
 	}
 
 	if len(config.AppBasicAuthCredential) > 0 {
@@ -192,7 +251,6 @@ func restServer(_ *cobra.Command, _ []string) {
 	// serve the runtime-downloaded copy at "/" (behind basic auth like the
 	// rest of the API surface).
 	uiCtx, uiCancel := context.WithCancel(context.Background())
-	defer uiCancel()
 	registerUIRoute(apiGroup, uiCtx)
 
 	// Device-scoped operations (header-based). This must stay the LAST
@@ -201,62 +259,15 @@ func restServer(_ *cobra.Command, _ []string) {
 	// mounted after it. TestDeviceGroupIsRegisteredLast pins the order.
 	headerDeviceGroup := apiGroup.Group("", middleware.DeviceMiddleware(dm))
 	registerDeviceScopedRoutes(headerDeviceGroup)
-
-	stopMCP, err := startNativeMcpGateway(dm, oauthServer)
-	if err != nil {
-		logrus.Fatalln("Native MCP startup: ", err)
-	}
-	defer stopMCP()
-	go websocket.RunHub()
-
-	// Set auto reconnect to whatsapp server after booting
-	go helpers.SetAutoConnectAfterBooting(appUsecase)
-
-	// Set auto reconnect checking with a guaranteed client instance
-	startAutoReconnectCheckerIfClientAvailable()
-
-	// Set daily presence pulse scheduler when enabled
-	startPresencePulseSchedulerIfEnabled()
-
-	// Listen in a goroutine so we can trap SIGINT/SIGTERM and drain the
-	// server cleanly. Without this, Fiber's Listen blocks until the OS
-	// kills the process, leaking the Chatwoot Postgres importer pool and
-	// the chat storage DB connection.
-	listenErr := make(chan error, 1)
-	go func() {
-		listenErr <- app.Listen(config.AppHost+":"+config.AppPort, fiber.ListenConfig{ListenerNetwork: "tcp"})
-	}()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	select {
-	case err := <-listenErr:
-		if err != nil {
-			logrus.Fatalln("Failed to start: ", err.Error())
-		}
-	case sig := <-sigCh:
-		logrus.Infof("Received %s — shutting down", sig)
-		stopMCP()
-		if scheduleStop != nil {
-			scheduleStop()
-		}
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := app.ShutdownWithContext(shutdownCtx); err != nil {
-			logrus.Warnf("HTTP server shutdown: %v", err)
-		}
-		// Release any Chatwoot direct-Postgres importer pools opened by per-device
-		// sync services. Safe when Chatwoot is disabled or none were initialized.
-		if err := chatwoot.CloseAllSyncServices(); err != nil {
-			logrus.Warnf("Chatwoot sync close: %v", err)
-		}
-		if chatStorageDB != nil {
-			if err := chatStorageDB.Close(); err != nil {
-				logrus.Warnf("Chat storage close: %v", err)
+	cleanup := func() {
+		uiCancel()
+		if oauthServer != nil {
+			if err := oauthServer.Close(); err != nil {
+				logrus.Warnf("MCP OAuth storage close: %v", err)
 			}
 		}
 	}
+	return app, oauthServer, cleanup, nil
 }
 
 func registerUIRoute(apiGroup fiber.Router, ctx context.Context) {
