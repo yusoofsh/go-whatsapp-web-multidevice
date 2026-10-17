@@ -289,7 +289,9 @@
             "type": "boolean"
           },
           "limit": {
-            "description": "list_chats (default 25) / get_messages (default 50): max rows",
+            "description": "list_chats (default 25) / get_messages (default 50): max rows, 1-100",
+            "maximum": 100,
+            "minimum": 1,
             "type": "integer"
           },
           "media_only": {
@@ -298,6 +300,7 @@
           },
           "offset": {
             "description": "list_chats/get_messages: rows to skip (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "pinned": {

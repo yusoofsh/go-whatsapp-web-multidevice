@@ -6,6 +6,7 @@ import (
 
 	domainChat "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chat"
 	domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/validations"
 	mcpg "github.com/mark3labs/mcp-go/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,4 +135,28 @@ func TestHandleChatDispatch(t *testing.T) {
 		require.NotNil(t, cs.archived)
 		assert.True(t, cs.archived.Archived)
 	})
+}
+
+// validatingChatService runs the production list validator so the MCP handler
+// sees the same error the real usecase returns.
+type validatingChatService struct {
+	domainChat.IChatUsecase
+}
+
+func (validatingChatService) ListChats(ctx context.Context, r domainChat.ListChatsRequest) (domainChat.ListChatsResponse, error) {
+	if err := validations.ValidateListChats(ctx, &r); err != nil {
+		return domainChat.ListChatsResponse{}, err
+	}
+	return domainChat.ListChatsResponse{}, nil
+}
+
+func TestHandleChatListChatsLimitTooLarge(t *testing.T) {
+	h := InitMcpChat(validatingChatService{}, &stubUserService{}, &stubResolver{})
+	res, err := h.handleChat(deviceCtx(), callReq(map[string]any{"action": "list_chats", "limit": 1000}))
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	assert.True(t, res.IsError)
+	text, ok := mcpg.AsTextContent(res.Content[0])
+	require.True(t, ok)
+	assert.Equal(t, "limit: must be no greater than 100.", text.Text)
 }

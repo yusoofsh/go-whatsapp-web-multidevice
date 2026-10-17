@@ -42,6 +42,9 @@ func (controller *Chat) ListChats(c fiber.Ctx) error {
 	}
 
 	response, err := controller.Service.ListChats(whatsapp.ContextWithDevice(c.Context(), getDeviceFromCtx(c)), request)
+	if handled, respErr := clientErrorResponse(c, err); handled {
+		return respErr
+	}
 	utils.PanicIfNeeded(err)
 
 	return c.JSON(utils.ResponseData{
@@ -88,6 +91,9 @@ func (controller *Chat) GetChatMessages(c fiber.Ctx) error {
 	}
 
 	response, err := controller.Service.GetChatMessages(whatsapp.ContextWithDevice(c.Context(), getDeviceFromCtx(c)), request)
+	if handled, respErr := clientErrorResponse(c, err); handled {
+		return respErr
+	}
 	utils.PanicIfNeeded(err)
 
 	return c.JSON(utils.ResponseData{

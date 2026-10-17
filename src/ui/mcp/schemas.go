@@ -573,10 +573,13 @@ const chatSchema = `{
     },
     "limit": {
       "type": "integer",
-      "description": "list_chats (default 25) / get_messages (default 50): max rows"
+      "minimum": 1,
+      "maximum": 100,
+      "description": "list_chats (default 25) / get_messages (default 50): max rows, 1-100"
     },
     "offset": {
       "type": "integer",
+      "minimum": 0,
       "description": "list_chats/get_messages: rows to skip (default 0)"
     },
     "search": {
