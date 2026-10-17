@@ -21,7 +21,7 @@ func assertHardeningRejected(t *testing.T, result map[string]any) {
 
 func TestPresenceSchedulingRejectedBeforeDispatch(t *testing.T) {
 	fields := []struct {
-		name string
+		name  string
 		value any
 	}{
 		{"scheduled_at", "2099-01-01T00:00:00Z"},
