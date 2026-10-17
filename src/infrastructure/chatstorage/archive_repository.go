@@ -11,9 +11,7 @@ import (
 
 var _ domain.IArchiveRepository = (*SQLiteRepository)(nil)
 
-const archiveColumns = `id, chat_jid, device_id, sender, content, timestamp, is_from_me,
- media_type, call_metadata, filename, url, direct_path, media_key, file_sha256,
- file_enc_sha256, file_length, referral_metadata, context_metadata, created_at, updated_at`
+const archiveColumns = messageColumns
 
 func archiveWhere(f domain.ArchiveFilter) (string, []any) {
 	clauses := []string{"device_id = ?"}
