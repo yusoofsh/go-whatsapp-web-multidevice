@@ -148,22 +148,33 @@ const historySchema = `{
   {"if":{"properties":{"action":{"enum":["coverage","request_backfill"]}}},"then":{"required":["chat_jid"]}}
  ]
 }`
-const newsletterSchema = `{
+const parityNewsletterSchema = `{
  "type":"object","additionalProperties":false,"required":["action"],
  "properties":{
-  "action":{"type":"string","enum":["list","get_messages","download_media","unfollow"]},
+  "action":{"type":"string","enum":["list","get_messages","download_media","unfollow","follow","info","directory","messages","message_updates","live_updates_subscribe","live_updates_unsubscribe","live_updates_list"]},
   "device_id":{"type":"string","maxLength":256},
   "newsletter_id":{"type":"string","minLength":1,"maxLength":256},
+  "invite":{"type":"string","maxLength":256},
+  "view":{"type":"string","enum":["RECOMMENDED","TRENDING","POPULAR","NEW","FEATURED"]},
+  "search_text":{"type":"string","maxLength":256},
+  "country_codes":{"type":"array","items":{"type":"string","minLength":2,"maxLength":2}},
+  "categories":{"type":"array","items":{"type":"string","enum":["BUSINESS","ENTERTAINMENT","LIFESTYLE","NEWS","ORGANIZATIONS","PEOPLE","SPORTS"]}},
+  "cursor":{"type":"string","maxLength":1024},
   "count":{"type":"integer","minimum":1,"maximum":100,"default":50},
   "before":{"type":"integer","minimum":0,"maximum":2147483646},
+  "since":{"type":"integer","minimum":0},
+  "after":{"type":"integer","minimum":1},
   "server_id":{"type":"integer","minimum":1,"maximum":2147483646},
   "limit":{"type":"integer","minimum":1,"maximum":100,"default":50},
   "offset":{"type":"integer","minimum":0,"maximum":100000},
   "inline":{"type":"boolean","default":true}
  },
  "allOf":[
-  {"if":{"properties":{"action":{"enum":["get_messages","download_media","unfollow"]}}},"then":{"required":["newsletter_id"]}},
-  {"if":{"properties":{"action":{"const":"download_media"}}},"then":{"required":["server_id"]}}
+  {"if":{"properties":{"action":{"enum":["get_messages","download_media","unfollow","follow","messages","message_updates","live_updates_subscribe","live_updates_unsubscribe"]}}},"then":{"required":["newsletter_id"]}},
+  {"if":{"properties":{"action":{"const":"download_media"}}},"then":{"required":["server_id"]}},
+  {"if":{"properties":{"action":{"const":"info"}}},"then":{"oneOf":[{"required":["newsletter_id"]},{"required":["invite"]}]}},
+  {"if":{"properties":{"action":{"const":"message_updates"}}},"then":{"required":["after"]}},
+  {"if":{"properties":{"action":{"const":"directory"}}},"then":{"anyOf":[{"required":["search_text"],"properties":{"search_text":{"minLength":1}}},{"required":["country_codes"],"properties":{"country_codes":{"minItems":1}}}]}}
  ]
 }`
 const profileSchema = `{

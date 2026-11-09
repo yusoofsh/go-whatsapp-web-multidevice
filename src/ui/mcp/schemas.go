@@ -129,7 +129,8 @@ const sendSchema = `{
   },
   "max_answer": {
     "type": "integer",
-    "description": "type=poll: max selectable options (default 1)"
+    "minimum": 1,
+    "description": "type=poll: max selectable options, at most the number of options (default 1)"
   },
   "link": {
     "type": "string",
@@ -141,6 +142,12 @@ const sendSchema = `{
   },
   "duration": {
     "type": "integer",
+    "enum": [
+      0,
+      86400,
+      604800,
+      7776000
+    ],
     "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)"
   },
   "force_reupload": {
@@ -575,7 +582,7 @@ const chatSchema = `{
       "type": "integer",
       "minimum": 1,
       "maximum": 100,
-      "description": "list_chats (default 25) / get_messages (default 50): max rows, 1-100"
+      "description": "list_chats (default 25) / get_messages (default 50): max rows, 1 to 100"
     },
     "offset": {
       "type": "integer",
@@ -675,7 +682,7 @@ const groupSchema = `{
     "participants": {"type": "array", "items": {"type": "string"}, "description": "create (optional) / add_participants / remove_participants / promote / demote / manage_join_requests: phone numbers without suffix"},
     "invite_link": {"type": "string", "description": "join_with_link: WhatsApp invite link"},
     "reset": {"type": "boolean", "description": "invite_link: revoke and regenerate the link (default false)"},
-    "name": {"type": "string", "description": "set_name: new group name"},
+    "name": {"type": "string", "maxLength": 25, "description": "set_name: new group name (max 25 characters)"},
     "topic": {"type": "string", "description": "set_topic: new topic/description"},
     "announce": {"type": "boolean", "description": "set_settings: true = only admins can send"},
     "locked": {"type": "boolean", "description": "set_settings: true = only admins can edit group info"},
@@ -703,5 +710,32 @@ const appSchema = `{
   },
   "allOf": [
     {"if": {"properties": {"action": {"const": "login_code"}}}, "then": {"required": ["phone"]}}
+  ]
+}`
+
+const newsletterSchema = `{
+  "type": "object",
+  "required": ["action"],
+  "properties": {
+    "action": {"type": "string", "enum": ["follow","unfollow","info","directory","messages","message_updates","live_updates_subscribe","live_updates_unsubscribe","live_updates_list"], "description": "Channel operation"},
+    "device_id": {"type": "string", "description": "Act as this device instead of the connection default"},
+    "newsletter_id": {"type": "string", "description": "Channel JID ending with @newsletter"},
+    "invite": {"type": "string", "description": "info: channel invite link (https://whatsapp.com/channel/...) or code, instead of newsletter_id"},
+    "view": {"type": "string", "enum": ["RECOMMENDED","TRENDING","POPULAR","NEW","FEATURED"], "description": "directory: list to browse (default RECOMMENDED)"},
+    "search_text": {"type": "string", "description": "directory: search channels by name"},
+    "country_codes": {"type": "array", "items": {"type": "string", "minLength": 2, "maxLength": 2}, "description": "directory: ISO country codes, e.g. [\"BR\"]; required unless search_text is set"},
+    "categories": {"type": "array", "items": {"type": "string", "enum": ["BUSINESS","ENTERTAINMENT","LIFESTYLE","NEWS","ORGANIZATIONS","PEOPLE","SPORTS"]}, "description": "directory: category filter"},
+    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "description": "directory: page size (default 20)"},
+    "cursor": {"type": "string", "description": "directory: next_cursor from the previous page"},
+    "count": {"type": "integer", "minimum": 1, "maximum": 100, "description": "messages/message_updates: how many (default 50)"},
+    "before": {"type": "integer", "minimum": 0, "description": "messages: return messages older than this server_id"},
+    "since": {"type": "integer", "minimum": 0, "description": "message_updates: Unix timestamp; only messages updated after it"},
+    "after": {"type": "integer", "minimum": 1, "description": "message_updates (required): only messages with server_id greater than this"}
+  },
+  "allOf": [
+    {"if": {"properties": {"action": {"enum": ["follow","unfollow","messages","message_updates","live_updates_subscribe","live_updates_unsubscribe"]}}}, "then": {"required": ["newsletter_id"]}},
+    {"if": {"properties": {"action": {"const": "info"}}}, "then": {"oneOf": [{"required": ["newsletter_id"]}, {"required": ["invite"]}]}},
+    {"if": {"properties": {"action": {"const": "message_updates"}}}, "then": {"required": ["after"]}},
+    {"if": {"properties": {"action": {"const": "directory"}}}, "then": {"anyOf": [{"required": ["search_text"], "properties": {"search_text": {"minLength": 1}}}, {"required": ["country_codes"], "properties": {"country_codes": {"minItems": 1}}}]}}
   ]
 }`
