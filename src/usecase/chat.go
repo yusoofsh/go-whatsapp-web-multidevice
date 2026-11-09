@@ -12,6 +12,7 @@ import (
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/validations"
 	"github.com/sirupsen/logrus"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/appstate"
 	"go.mau.fi/whatsmeow/types"
 )
@@ -318,6 +319,26 @@ func (service serviceChat) PinChat(ctx context.Context, request domainChat.PinCh
 	return response, nil
 }
 
+// resolveHistoryJID accepts historyJID only when it is the chat itself or a
+// LID that the device store maps back to that chat.
+func resolveHistoryJID(ctx context.Context, client *whatsmeow.Client, chatJID types.JID, historyJID string) (types.JID, error) {
+	candidate, err := types.ParseJID(historyJID)
+	if err != nil {
+		return types.EmptyJID, pkgError.ValidationError("history_jid must be a valid JID")
+	}
+	if candidate.ToNonAD().String() == chatJID.ToNonAD().String() {
+		return chatJID, nil
+	}
+	if candidate.Server != types.HiddenUserServer || client == nil || client.Store == nil || client.Store.LIDs == nil {
+		return types.EmptyJID, pkgError.ValidationError("history_jid must match the canonical chat or a mapped LID")
+	}
+	mapped, err := client.Store.LIDs.GetPNForLID(ctx, candidate)
+	if err != nil || mapped.ToNonAD().String() != chatJID.ToNonAD().String() {
+		return types.EmptyJID, pkgError.ValidationError("history_jid LID is not mapped to the requested chat")
+	}
+	return candidate, nil
+}
+
 func (service serviceChat) SetDisappearingTimer(ctx context.Context, request domainChat.SetDisappearingTimerRequest) (response domainChat.SetDisappearingTimerResponse, err error) {
 	if err = validations.ValidateSetDisappearingTimer(ctx, &request); err != nil {
 		return response, err
@@ -423,7 +444,7 @@ func (service serviceChat) ArchiveChat(ctx context.Context, request domainChat.A
 
 // RequestChatHistory asks the phone for older messages of a chat (what
 // WhatsApp Web does when you scroll up / "load older messages"). It anchors
-// the request at the oldest message currently stored for that chat and sends
+// the request as resolveHistoryAnchor describes and sends
 // a HISTORY_SYNC_ON_DEMAND peer message via whatsmeow's
 // BuildHistorySyncRequest. The phone answers asynchronously with a
 // *events.HistorySync (ON_DEMAND), which the existing history-sync handler
@@ -449,13 +470,9 @@ func (service serviceChat) RequestChatHistory(ctx context.Context, request domai
 	if service.chatStorageRepo == nil {
 		return response, fmt.Errorf("chat storage is disabled")
 	}
-	oldest, err := service.chatStorageRepo.GetOldestMessageByDevice(deviceID, request.ChatJID)
+	anchorMessage, err := resolveHistoryAnchor(service.chatStorageRepo, deviceID, request)
 	if err != nil {
-		logrus.WithError(err).WithField("chat_jid", request.ChatJID).Error("Failed to look up oldest stored message")
 		return response, err
-	}
-	if oldest == nil {
-		return response, pkgError.ValidationError("chat has no stored messages yet; nothing to anchor the history sync request on")
 	}
 
 	// Validate JID and ensure connection
@@ -463,15 +480,21 @@ func (service serviceChat) RequestChatHistory(ctx context.Context, request domai
 	if err != nil {
 		return response, err
 	}
+	if request.HistoryJID != "" {
+		targetJID, err = resolveHistoryJID(ctx, client, targetJID, request.HistoryJID)
+		if err != nil {
+			return response, err
+		}
+	}
 
 	// BuildHistorySyncRequest reads only Chat, ID, IsFromMe and Timestamp.
 	anchor := &types.MessageInfo{
 		MessageSource: types.MessageSource{
 			Chat:     targetJID,
-			IsFromMe: oldest.IsFromMe,
+			IsFromMe: anchorMessage.IsFromMe,
 		},
-		ID:        oldest.ID,
-		Timestamp: oldest.Timestamp,
+		ID:        anchorMessage.ID,
+		Timestamp: anchorMessage.Timestamp,
 	}
 
 	historyRequest := client.BuildHistorySyncRequest(anchor, request.Count)
@@ -486,14 +509,63 @@ func (service serviceChat) RequestChatHistory(ctx context.Context, request domai
 	response.Status = "requested"
 	response.ChatJID = request.ChatJID
 	response.RequestedCount = request.Count
-	response.AnchorMessageID = oldest.ID
-	response.AnchorTimestamp = oldest.Timestamp.Format(time.RFC3339)
+	response.AnchorMessageID = anchorMessage.ID
+	response.AnchorTimestamp = anchorMessage.Timestamp.Format(time.RFC3339)
 
 	logrus.WithFields(logrus.Fields{
 		"chat_jid":          request.ChatJID,
 		"requested_count":   request.Count,
-		"anchor_message_id": oldest.ID,
+		"anchor_message_id": anchorMessage.ID,
 	}).Info("Requested on-demand chat history successfully")
 
 	return response, nil
+}
+
+// resolveHistoryAnchor returns the message the history request is anchored
+// on. A caller-supplied anchor must name all three fields WhatsApp needs; it
+// lets a chat be paged further back than local storage reaches. Otherwise the
+// anchor is the named stored message, or the oldest stored one.
+func resolveHistoryAnchor(repo domainChatStorage.IChatStorageRepository, deviceID string, request domainChat.RequestChatHistoryRequest) (*domainChatStorage.Message, error) {
+	if request.AnchorTimestamp != "" || request.AnchorIsFromMe != nil {
+		if request.AnchorMessageID == "" || len(request.AnchorMessageID) > 256 || request.AnchorTimestamp == "" || request.AnchorIsFromMe == nil {
+			return nil, pkgError.ValidationError("anchor_message_id, anchor_timestamp, and anchor_is_from_me must be provided together")
+		}
+		timestamp, err := time.Parse(time.RFC3339, request.AnchorTimestamp)
+		if err != nil || timestamp.IsZero() || timestamp.Unix() <= 0 {
+			return nil, pkgError.ValidationError("anchor_timestamp must be a positive RFC3339 timestamp")
+		}
+		return &domainChatStorage.Message{
+			ID:        request.AnchorMessageID,
+			ChatJID:   request.ChatJID,
+			DeviceID:  deviceID,
+			IsFromMe:  *request.AnchorIsFromMe,
+			Timestamp: timestamp,
+		}, nil
+	}
+
+	var anchor *domainChatStorage.Message
+	var err error
+	if request.AnchorMessageID != "" {
+		anchor, err = repo.GetMessageByIDChatAndDevice(deviceID, request.ChatJID, request.AnchorMessageID)
+	} else {
+		anchor, err = repo.GetOldestMessageByDevice(deviceID, request.ChatJID)
+	}
+	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"chat_jid":  request.ChatJID,
+			"device_id": deviceID,
+			"anchor_id": request.AnchorMessageID,
+		}).Error("Failed to look up history anchor")
+		return nil, err
+	}
+	if anchor == nil {
+		if request.AnchorMessageID != "" {
+			return nil, pkgError.ValidationError("anchor message not found for the selected device and chat")
+		}
+		return nil, pkgError.ValidationError("chat has no stored messages yet; nothing to anchor the history sync request on")
+	}
+	if anchor.ID == "" || anchor.ChatJID != request.ChatJID || anchor.DeviceID != deviceID || anchor.MediaType == "call" {
+		return nil, pkgError.ValidationError("anchor message is invalid for the selected device and chat")
+	}
+	return anchor, nil
 }
