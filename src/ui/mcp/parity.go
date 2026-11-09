@@ -50,7 +50,7 @@ func registerParityTools(s *server.MCPServer, deps Deps, resolver deviceResolver
 	addParityTool(s, "whatsapp_group", "Existing group actions plus get_photo, set_photo from a staged media_id, remove_photo and bounded JSON export_participants. Numeric group IDs are normalized to @g.us. Removing photos or members is destructive.", parityGroupSchema(), true, h.group)
 	addParityTool(s, "whatsapp_app", "Existing session actions plus list_devices, add_device, remove_device using target_device_id. reject_call handles an existing incoming call only; no voice/video initiation or acceptance.", parityAppSchema(), true, h.app)
 	addParityTool(s, "whatsapp_history", "Device-scoped local archive: search_all with combined filters, chronological context, bounded JSON export, coverage and asynchronous best-effort request_backfill. Stored coverage never proves complete phone history. Text-preferring clients receive JSON results.", json.RawMessage(historySchema), false, h.history)
-	addParityTool(s, "whatsapp_newsletter", "List subscribed channels, get_messages with count/before pagination, private download_media by server_id, and unfollow. Follow/join and publishing are not exposed by the pinned GoWA REST usecase.", json.RawMessage(newsletterSchema), true, h.newsletter)
+	addParityTool(s, "whatsapp_newsletter", "List subscribed channels, get_messages with count/before pagination, private download_media by server_id, and unfollow. Follow, info, directory, messages, message_updates and live_updates_* delegate to the upstream channel handler. Publishing is not exposed by the pinned GoWA REST usecase.", json.RawMessage(parityNewsletterSchema), true, h.newsletter)
 	addParityTool(s, "whatsapp_profile", "Get profile/avatar/business profile/privacy. Update own push name or avatar with staged media_id; update_profile accepts exactly one of those fields. Privacy and business-profile writes are unsupported. phone defaults to the selected account for reads and must be omitted for profile updates; select that account with device_id.", json.RawMessage(profileSchema), false, h.profile)
 }
 
@@ -346,6 +346,14 @@ func (h *parityHandler) profile(ctx context.Context, r mcpg.CallToolRequest) (*m
 	}
 }
 func (h *parityHandler) newsletter(ctx context.Context, r mcpg.CallToolRequest) (*mcpg.CallToolResult, error) {
+	switch r.GetString("action", "") {
+	case "list", "get_messages", "download_media", "unfollow":
+	default:
+		if h.deps.Newsletter == nil {
+			return parityError("newsletter service unavailable")
+		}
+		return InitMcpNewsletter(h.deps.Newsletter, h.resolver).handleNewsletter(ctx, r)
+	}
 	ctx, _, err := resolveDeviceContext(ctx, r, h.resolver)
 	if err != nil {
 		return parityResult(nil, err)

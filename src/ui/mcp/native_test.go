@@ -30,7 +30,7 @@ func (r *parityResolver) ResolveDevice(id string) (*whatsapp.DeviceInstance, str
 		return nil, "", errors.New("unknown device")
 	}
 }
-func nativeRequest(t *testing.T, client *http.Client, base, method, user, session, device string, body []byte) *http.Response {
+func nativeRequest(t *testing.T, client *http.Client, base, method, user, session, device string, body []byte, headers ...string) *http.Response {
 	t.Helper()
 	r, err := http.NewRequest(method, base+"/mcp", bytes.NewReader(body))
 	require.NoError(t, err)
@@ -43,6 +43,9 @@ func nativeRequest(t *testing.T, client *http.Client, base, method, user, sessio
 	if device != "" {
 		r.Header.Set("X-Device-Id", device)
 	}
+	for i := 0; i+1 < len(headers); i += 2 {
+		r.Header.Set(headers[i], headers[i+1])
+	}
 	response, err := client.Do(r)
 	require.NoError(t, err)
 	return response
@@ -51,7 +54,17 @@ func nativeRPC(t *testing.T, client *http.Client, base, user, session, device, m
 	t.Helper()
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 	require.NoError(t, err)
-	response := nativeRequest(t, client, base, http.MethodPost, user, session, device, body)
+	var headers []string
+	if meta, ok := params.(map[string]any)["_meta"].(map[string]any); ok {
+		if version, ok := meta["io.modelcontextprotocol/protocolVersion"].(string); ok {
+			// From 2026-07-28 the HTTP headers must mirror the request body.
+			headers = []string{"Mcp-Protocol-Version", version, "Mcp-Method", method}
+			if name, ok := params.(map[string]any)["name"].(string); ok {
+				headers = append(headers, "Mcp-Name", name)
+			}
+		}
+	}
+	response := nativeRequest(t, client, base, http.MethodPost, user, session, device, body, headers...)
 	defer response.Body.Close()
 	raw, err := io.ReadAll(response.Body)
 	require.NoError(t, err)

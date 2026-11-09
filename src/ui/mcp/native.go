@@ -284,7 +284,6 @@ func (h *NativeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = json.Unmarshal(body, &version)
 		if version.Params.Meta["io.modelcontextprotocol/protocolVersion"] == "2026-07-28" || r.Header.Get("MCP-Protocol-Version") == "2026-07-28" {
-			r.Header.Set("MCP-Protocol-Version", "2025-11-25")
 			r.Header.Del("Mcp-Session-Id")
 			h.modernTransport.ServeHTTP(w, r)
 			return
