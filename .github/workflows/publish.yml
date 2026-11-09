@@ -52,7 +52,7 @@ jobs:
       contents: read
       packages: write
     env:
-      IMAGE: ghcr.io/${{ github.repository }}:latest
+      IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -99,5 +99,7 @@ jobs:
         run: |
           current=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           test "$current" = "$SOURCE_SHA"
-          docker tag gowa-candidate:test "$IMAGE"
-          docker push "$IMAGE"
+          docker tag gowa-candidate:test "$IMAGE:sha-$SOURCE_SHA"
+          docker tag gowa-candidate:test "$IMAGE:latest"
+          docker push "$IMAGE:sha-$SOURCE_SHA"
+          docker push "$IMAGE:latest"

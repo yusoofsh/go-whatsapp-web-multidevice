@@ -61,9 +61,14 @@ enabled; both transports share the same device manager and usecases.
   `go vet ./...`, and `go build`. The `publish` job builds `linux/amd64` from
   `docker/mcp.Dockerfile`, then checks `--help`, `ffmpeg version`, and
   `org.opencontainers.image.revision`. On every push to `main`, that job pushes
-  `ghcr.io/${{ github.repository }}:latest` after the checks pass and `main`
-  still names that commit. A pull request runs the same checks and leaves the
-  registry unchanged. `workflow_dispatch` on `main` also pushes that tag.
+  `ghcr.io/${{ github.repository }}:sha-<commit>` and `:latest` after the checks
+  pass and `main` still names that commit. A pull request runs the same checks and
+  leaves the registry unchanged. `workflow_dispatch` on `main` also pushes those tags.
+- Version tags: the release workflow in `.github/workflows/` runs on a `v<major>.<minor>.<patch>-ys.<n>`
+  tag push. The base version must equal `AppVersion` and the tagged commit must be on
+  `main`. The job points `:<version>-ys.<n>` at the existing `sha-<commit>` image by
+  copying the manifest, so the version tag and the tested image share one digest.
+  Deploy by version tag, not by digest or `:latest`.
 
 ## Cross-layer contracts
 
