@@ -128,7 +128,7 @@ func TestHandlerTemporaryBanBroadcastsAndForwards(t *testing.T) {
 	got := captureDeviceWebhooks(t)
 	inst := &DeviceInstance{id: "slot-ban", jid: "6281111111111@s.whatsapp.net", createdAt: time.Now()}
 
-	go handler(context.Background(), inst, &events.TemporaryBan{Code: events.TempBanBlockedByUsers, Expire: time.Hour})
+	go handler(t.Context(), inst, &events.TemporaryBan{Code: events.TempBanBlockedByUsers, Expire: time.Hour})
 
 	msg := recvBroadcast(t)
 	assert.Equal(t, "DEVICE_TEMPORARY_BAN", msg.Code)
@@ -153,7 +153,7 @@ func TestHandlerReachoutTimelockBroadcastsAndForwards(t *testing.T) {
 	evt := &events.NotifyAccountReachoutTimelock{EnforcementType: "example-type", IsActive: true}
 	evt.TimeEnforcementEnds.Time = time.Date(2026, 10, 29, 3, 30, 0, 0, time.UTC)
 
-	go handler(context.Background(), inst, evt)
+	go handler(t.Context(), inst, evt)
 
 	msg := recvBroadcast(t)
 	assert.Equal(t, "DEVICE_REACHOUT_TIMELOCK", msg.Code)
@@ -186,7 +186,7 @@ func TestHandlerLoggedOutForwardsWithIdentityFromBeforeReset(t *testing.T) {
 		inst.ResetClient()
 	})
 
-	go handler(context.Background(), inst, &events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureUnknownLogout})
+	go handler(t.Context(), inst, &events.LoggedOut{OnConnect: true, Reason: events.ConnectFailureUnknownLogout})
 
 	msg := recvBroadcast(t)
 	assert.Equal(t, "DEVICE_LOGGED_OUT", msg.Code)
@@ -222,7 +222,7 @@ func TestDeviceEventRoutesSharedNumberToEmittingSlot(t *testing.T) {
 
 	slotB := &DeviceInstance{id: "slot-b", jid: bareJID, adJID: "6284444444444:7@s.whatsapp.net", createdAt: time.Now()}
 	slotB.SetChatStorage(deviceEventConfigRepo{records: records})
-	go handler(context.Background(), slotB, &events.TemporaryBan{Code: events.TempBanSentTooManySameMessage})
+	go handler(t.Context(), slotB, &events.TemporaryBan{Code: events.TempBanSentTooManySameMessage})
 	recvBroadcast(t)
 
 	delivered := recvWebhook(t, got)
@@ -243,7 +243,7 @@ func TestDeviceEventWebhookDoesNotWaitForStalledWebsocket(t *testing.T) {
 	returned := make(chan struct{})
 	// Nothing receives from websocket.Broadcast here, as with a stalled hub.
 	go func() {
-		handler(context.Background(), inst, &events.NotifyAccountReachoutTimelock{IsActive: true})
+		handler(t.Context(), inst, &events.NotifyAccountReachoutTimelock{IsActive: true})
 		close(returned)
 	}()
 
@@ -272,7 +272,7 @@ func TestDeviceEventIgnoresSiblingRecordFoundByBareJID(t *testing.T) {
 
 	slotB := &DeviceInstance{id: "slot-b", jid: bareJID, adJID: "6286666666666:7@s.whatsapp.net", createdAt: time.Now()}
 	slotB.SetChatStorage(deviceEventConfigRepo{records: []*domainChatStorage.DeviceRecord{sibling}})
-	go handler(context.Background(), slotB, &events.TemporaryBan{Code: events.TempBanBlockedByUsers})
+	go handler(t.Context(), slotB, &events.TemporaryBan{Code: events.TempBanBlockedByUsers})
 	recvBroadcast(t)
 
 	delivered := recvWebhook(t, got)

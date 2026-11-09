@@ -46,7 +46,7 @@ func TestDeviceEventSQLRepairedSlotKeepsWebhook(t *testing.T) {
 	inst := wa.NewDeviceInstance(slot, whatsmeow.NewClient(&store.Device{ID: &jid}, nil), repo)
 	done := make(chan struct{})
 	go func() {
-		wa.HandleDeviceEventForTest(context.Background(), inst, &events.TemporaryBan{Code: events.TempBanBlockedByUsers})
+		wa.HandleDeviceEventForTest(t.Context(), inst, &events.TemporaryBan{Code: events.TempBanBlockedByUsers})
 		close(done)
 	}()
 	select {
@@ -74,7 +74,7 @@ func TestDeviceEventSQLBlockedLookupDoesNotHoldLogout(t *testing.T) {
 	inst := wa.NewDeviceInstance("slot", whatsmeow.NewClient(&store.Device{ID: &jid}, nil), repo)
 	reset, done := make(chan struct{}), make(chan struct{})
 	inst.SetOnLoggedOut(func(string) { inst.ResetClient(); close(reset) })
-	go func() { wa.HandleDeviceEventForTest(context.Background(), inst, &events.LoggedOut{}); close(done) }()
+	go func() { wa.HandleDeviceEventForTest(t.Context(), inst, &events.LoggedOut{}); close(done) }()
 	select {
 	case <-reset:
 	case <-time.After(2 * time.Second):
