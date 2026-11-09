@@ -55,6 +55,19 @@ type HistoryResponse struct {
 	Asynchronous bool                        `json:"asynchronous"`
 	BestEffort   bool                        `json:"best_effort"`
 	Completeness string                      `json:"completeness"`
+	// PhoneVerification is set only when an operator-supplied phone check
+	// covers this chat.
+	PhoneVerification *PhoneVerification `json:"phone_verification,omitempty"`
+}
+
+// PhoneVerification reports an operator-recorded comparison between the local
+// archive and the primary phone.
+type PhoneVerification struct {
+	Status          string `json:"status"`
+	CheckedAt       string `json:"checked_at,omitempty"`
+	RecordedAt      string `json:"recorded_at,omitempty"`
+	KnownOldestDate string `json:"known_oldest_date,omitempty"`
+	Scope           string `json:"scope"`
 }
 
 type IHistoryUsecase interface {

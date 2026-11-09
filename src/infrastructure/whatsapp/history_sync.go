@@ -69,11 +69,12 @@ func processHistorySync(ctx context.Context, data *waHistorySync.HistorySync, ch
 	log.Infof("Processing history sync type: %s", syncType.String())
 
 	switch syncType {
-	case waHistorySync.HistorySync_INITIAL_BOOTSTRAP, waHistorySync.HistorySync_RECENT, waHistorySync.HistorySync_ON_DEMAND:
+	case waHistorySync.HistorySync_INITIAL_BOOTSTRAP, waHistorySync.HistorySync_FULL, waHistorySync.HistorySync_RECENT, waHistorySync.HistorySync_ON_DEMAND:
 		// Process conversation messages. ON_DEMAND is the phone's reply to a
 		// history sync request built with Client.BuildHistorySyncRequest (older
-		// messages fetched on demand, e.g. "load older messages"); it carries
-		// conversations in the same shape as INITIAL_BOOTSTRAP/RECENT.
+		// messages fetched on demand, e.g. "load older messages"). FULL arrives
+		// after pairing with APP_HISTORY_FULL_SYNC. Both carry conversations in
+		// the same shape as INITIAL_BOOTSTRAP/RECENT.
 		return processConversationMessages(ctx, data, chatStorageRepo, client)
 	case waHistorySync.HistorySync_PUSH_NAME:
 		// Process push names to update chat names
@@ -300,10 +301,10 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 			}
 
 			storeChat := true
-			if data.GetSyncType() == waHistorySync.HistorySync_ON_DEMAND {
-				// ON_DEMAND delivers messages older than the local anchor, so it
-				// must not clobber flags (e.g. archived) that live history didn't
-				// touch, and any timer it carries is not the current setting.
+			if syncType := data.GetSyncType(); syncType == waHistorySync.HistorySync_ON_DEMAND || syncType == waHistorySync.HistorySync_FULL {
+				// ON_DEMAND and FULL deliver messages older than what is already
+				// stored, so they must not clobber flags (e.g. archived) that live
+				// history didn't touch, and any timer they carry is not current.
 				// If the current state cannot be read, leave the chat row alone.
 				if existing, err := chatStorageRepo.GetChatByDevice(deviceID, chatJID); err != nil {
 					log.Warnf("Failed to load existing chat %s for on-demand merge, keeping stored metadata: %v", chatJID, err)

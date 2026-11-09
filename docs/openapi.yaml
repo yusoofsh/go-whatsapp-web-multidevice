@@ -3072,12 +3072,15 @@ paths:
       summary: Request older chat history from the phone
       description: >-
         Asks the phone for older messages of a chat on demand (what WhatsApp
-        Web does when you scroll up / "load older messages"). The request is
-        anchored at the oldest message currently stored locally for that
-        chat, so the chat must already have at least one stored message. The
-        phone answers asynchronously with a history sync event that gets
-        persisted into chat storage; this endpoint only confirms the request
-        was sent, it does not return the older messages directly.
+        Web does when you scroll up / "load older messages"). By default the
+        request is anchored at the oldest message currently stored locally for
+        that chat, so the chat must already have at least one stored message.
+        Set anchor_message_id to anchor at a different stored message, or set
+        anchor_message_id, anchor_timestamp and anchor_is_from_me together to
+        anchor at a message that is not stored locally. The phone answers
+        asynchronously with a history sync event that gets persisted into chat
+        storage; this endpoint only confirms the request was sent, it does not
+        return the older messages directly.
       parameters:
         - $ref: '#/components/parameters/DeviceIdHeader'
         - in: path
@@ -3100,6 +3103,24 @@ paths:
                   maximum: 500
                   example: 50
                   description: Number of older messages to request from the phone. Omit it, or send 0, to use the default of 50.
+                history_jid:
+                  type: string
+                  example: '123456789012345@lid'
+                  description: Send the request for this JID instead of chat_jid. It must be chat_jid itself or a LID that the device maps to chat_jid. Use it when the phone keys the conversation by LID.
+                anchor_message_id:
+                  type: string
+                  maxLength: 256
+                  example: '3EB0C431C26A1916E8F2'
+                  description: ID of the message to anchor on. Alone, it must be a stored message of this chat and device. With anchor_timestamp and anchor_is_from_me, it may be a message that is not stored.
+                anchor_timestamp:
+                  type: string
+                  format: date-time
+                  example: '2024-01-02T03:04:05Z'
+                  description: RFC 3339 time of the anchor message, after 1970-01-01. Requires anchor_message_id and anchor_is_from_me.
+                anchor_is_from_me:
+                  type: boolean
+                  example: false
+                  description: Whether the anchor message was sent by this account. Requires anchor_message_id and anchor_timestamp.
       responses:
         '200':
           description: OK
@@ -3108,7 +3129,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/RequestChatHistoryResponse'
         '400':
-          description: Bad Request (e.g. missing chat_jid, count out of range, or chat has no stored messages to anchor on)
+          description: Bad Request (e.g. missing chat_jid, count out of range, chat has no stored messages to anchor on, an incomplete or invalid anchor, or a history_jid that is not mapped to the chat)
           content:
             application/json:
               schema:

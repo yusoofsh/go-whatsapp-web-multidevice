@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -211,6 +212,11 @@ func initEnvConfig() {
 	if viper.IsSet("whatsapp_auto_reject_call") {
 		config.WhatsappAutoRejectCall = viper.GetBool("whatsapp_auto_reject_call")
 	}
+	if viper.IsSet("app_history_full_sync") {
+		config.AppHistoryFullSync = viper.GetBool("app_history_full_sync")
+	}
+	config.AppHistoryFullSyncDays = getPositiveUint32Env("app_history_full_sync_days", config.AppHistoryFullSyncDays)
+	config.AppHistoryFullSyncSizeMB = getPositiveUint32Env("app_history_full_sync_size_mb", config.AppHistoryFullSyncSizeMB)
 	if envPresenceOnConnect := viper.GetString("whatsapp_presence_on_connect"); envPresenceOnConnect != "" {
 		config.WhatsappPresenceOnConnect = envPresenceOnConnect
 	}
@@ -320,6 +326,24 @@ func initEnvConfig() {
 	if viper.IsSet("chatwoot_message_delete") {
 		config.ChatwootMessageDelete = viper.GetBool("chatwoot_message_delete")
 	}
+}
+
+// getPositiveUint32Env returns fallback when key is unset, blank or not an
+// unsigned 32-bit integer. Zero is accepted and means no limit.
+func getPositiveUint32Env(key string, fallback uint32) uint32 {
+	if !viper.IsSet(key) {
+		return fallback
+	}
+	value := strings.TrimSpace(viper.GetString(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseUint(value, 10, 32)
+	if err != nil {
+		logrus.WithError(err).Warnf("Ignoring invalid %s; expected an unsigned 32-bit integer", key)
+		return fallback
+	}
+	return uint32(parsed)
 }
 
 func initFlags() {

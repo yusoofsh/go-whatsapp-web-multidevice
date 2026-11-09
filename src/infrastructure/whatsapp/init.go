@@ -12,6 +12,7 @@ import (
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
 	"go.mau.fi/whatsmeow"
+	"go.mau.fi/whatsmeow/proto/waCompanionReg"
 	"go.mau.fi/whatsmeow/store"
 	"go.mau.fi/whatsmeow/store/sqlstore"
 	"go.mau.fi/whatsmeow/types"
@@ -86,6 +87,7 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	osName := fmt.Sprintf("%s %s", config.AppOs, config.AppVersion)
 	store.DeviceProps.PlatformType = &config.AppPlatform
 	store.DeviceProps.Os = &osName
+	configureHistorySyncProps()
 
 	// Keep references for global state update after client creation
 	primaryDB := storeContainer
@@ -136,4 +138,28 @@ func InitWaCLI(ctx context.Context, storeContainer, keysStoreContainer *sqlstore
 	globalStateMu.Unlock()
 
 	return client
+}
+
+// configureHistorySyncProps sets the history sync request that the phone
+// receives at pairing time. RequireFullSync is always written so a disabled
+// setting overrides any earlier value in the shared store.DeviceProps.
+func configureHistorySyncProps() {
+	requireFullSync := config.AppHistoryFullSync
+	store.DeviceProps.RequireFullSync = &requireFullSync
+	if !requireFullSync {
+		return
+	}
+	historyConfig := store.DeviceProps.GetHistorySyncConfig()
+	if historyConfig == nil {
+		historyConfig = &waCompanionReg.DeviceProps_HistorySyncConfig{}
+		store.DeviceProps.HistorySyncConfig = historyConfig
+	}
+	if config.AppHistoryFullSyncDays > 0 {
+		days := config.AppHistoryFullSyncDays
+		historyConfig.FullSyncDaysLimit = &days
+	}
+	if config.AppHistoryFullSyncSizeMB > 0 {
+		sizeMB := config.AppHistoryFullSyncSizeMB
+		historyConfig.FullSyncSizeMbLimit = &sizeMB
+	}
 }

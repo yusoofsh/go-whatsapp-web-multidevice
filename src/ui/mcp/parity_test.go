@@ -66,6 +66,7 @@ type parityChatSpy struct {
 	pin            *chat.PinChatRequest
 	timer          *chat.SetDisappearingTimerRequest
 	historyRequest chat.HistoryRequest
+	coverageChats  []string
 }
 
 func (s *parityChatSpy) PinChat(_ context.Context, r chat.PinChatRequest) (chat.PinChatResponse, error) {
@@ -77,6 +78,10 @@ func (s *parityChatSpy) SetDisappearingTimer(_ context.Context, r chat.SetDisapp
 	return chat.SetDisappearingTimerResponse{}, nil
 }
 func (s *parityChatSpy) History(_ context.Context, r chat.HistoryRequest) (chat.HistoryResponse, error) {
+	if r.Action == "coverage" {
+		s.coverageChats = append(s.coverageChats, r.ChatJID)
+		return chat.HistoryResponse{Action: r.Action}, nil
+	}
 	s.historyRequest = r
 	return chat.HistoryResponse{Action: r.Action, Messages: []chat.HistoryMessage{{ID: "fixture", Content: "not live"}}, Limit: r.Limit, Total: 1, NextOffset: 1, Completeness: "unknown", Asynchronous: r.Action == "request_backfill", BestEffort: true}, nil
 }
@@ -300,6 +305,7 @@ func TestParityProfileNewsletterAndPrivateExports(t *testing.T) {
 	require.NotNil(t, result["structuredContent"].(map[string]any)["media"])
 	s.invoke(t, "whatsapp_history", map[string]any{"action": "request_backfill", "chat_jid": "10@g.us", "count": 100})
 	require.Equal(t, 100, s.chat.historyRequest.Count)
+	require.Equal(t, []string{"10@g.us"}, s.chat.coverageChats)
 }
 func TestParityInvalidActionsAndBounds(t *testing.T) {
 	s := newParityTestSuite(t)

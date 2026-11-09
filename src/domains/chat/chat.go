@@ -99,7 +99,15 @@ type SetDisappearingTimerResponse struct {
 // RequestChatHistory operations (on-demand history sync)
 type RequestChatHistoryRequest struct {
 	ChatJID string `json:"chat_jid" uri:"chat_jid"`
-	Count   int    `json:"count"`
+	// HistoryJID addresses the request to the LID form of ChatJID when the
+	// phone keys that conversation by LID.
+	HistoryJID      string `json:"history_jid,omitempty"`
+	Count           int    `json:"count"`
+	AnchorMessageID string `json:"anchor_message_id,omitempty"`
+	// AnchorTimestamp and AnchorIsFromMe, together with AnchorMessageID, name
+	// an anchor that is not in local storage.
+	AnchorTimestamp string `json:"anchor_timestamp,omitempty"`
+	AnchorIsFromMe  *bool  `json:"anchor_is_from_me,omitempty"`
 }
 
 type RequestChatHistoryResponse struct {
