@@ -418,7 +418,7 @@ func (h *parityHandler) newsletter(ctx context.Context, r mcpg.CallToolRequest) 
 	}
 }
 func (h *parityHandler) history(ctx context.Context, r mcpg.CallToolRequest) (*mcpg.CallToolResult, error) {
-	ctx, _, err := resolveDeviceContext(ctx, r, h.resolver)
+	ctx, instance, err := resolveDeviceContext(ctx, r, h.resolver)
 	if err != nil {
 		return parityResult(nil, err)
 	}
@@ -438,10 +438,24 @@ func (h *parityHandler) history(ctx context.Context, r mcpg.CallToolRequest) (*m
 	if err != nil {
 		return parityResult(nil, err)
 	}
+	coverageUnavailable := false
+	if instance != nil && req.ChatJID != "" && value.Coverage == nil {
+		coverage, coverageErr := service.History(ctx, chat.HistoryRequest{Action: "coverage", ChatJID: req.ChatJID})
+		if coverageErr != nil {
+			coverageUnavailable = true
+		} else if coverage.Coverage == nil || coverage.Coverage.ChatJID != req.ChatJID {
+			coverageUnavailable = true
+		} else {
+			value.Coverage = coverage.Coverage
+		}
+	}
+	if instance != nil && !coverageUnavailable {
+		applyPhoneVerification(&value, instance.JID(), req.ChatJID)
+	}
 	if req.Action != "export" {
 		return parityResult(value, nil)
 	}
-	return h.exportJSON(ctx, "history.json", value, map[string]any{"limit": value.Limit, "offset": value.Offset, "total": value.Total, "next_offset": value.NextOffset, "has_more": value.HasMore, "completeness": "unknown"}, r.GetBool("inline", false))
+	return h.exportJSON(ctx, "history.json", value, map[string]any{"limit": value.Limit, "offset": value.Offset, "total": value.Total, "next_offset": value.NextOffset, "has_more": value.HasMore, "completeness": value.Completeness}, r.GetBool("inline", false))
 }
 func (h *parityHandler) exportJSON(ctx context.Context, name string, value any, metadata map[string]any, inline bool) (*mcpg.CallToolResult, error) {
 	if h.deps.Data == nil {

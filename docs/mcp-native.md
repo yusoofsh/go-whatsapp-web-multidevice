@@ -70,6 +70,36 @@ Search/export pages are 1–500 rows with offsets 0–100,000. Context windows a
 
 Coverage reports locally stored counts, oldest/newest timestamps and a usable backfill anchor. It does **not** prove complete phone history. `request_backfill`, and the preserved `whatsapp_chat.action=request_history`, call the existing per-chat history request with count 1–500. A `requested` result means dispatched, not completed. Retrieval is asynchronous and best effort; query after a `history.sync` event. An empty chat has no anchor, and the phone/WhatsApp determines historical availability.
 
+When a `whatsapp_history` call names a `chat_jid` and its result has no coverage, the server also runs a coverage lookup for that chat and adds the `coverage` object to the result. This applies to every action, including `request_backfill` and `export`. Export metadata reports the result's `completeness` value.
+
+#### Phone verification file
+
+An operator can record manual checks against the primary phone in a JSON file and set `APP_HISTORY_PHONE_VERIFICATION_FILE` to its path in the process environment; the server does not read this variable from `.env`. The server reads the file on each `whatsapp_history` call that names a `chat_jid`. It ignores a missing, unreadable or invalid file, and a file whose `account` is not the selected device. It also adds no check when the coverage lookup fails.
+
+```json
+{
+  "account": "628111000111@s.whatsapp.net",
+  "updated_at": "2026-10-01T00:00:00Z",
+  "chats": {
+    "628222000222@s.whatsapp.net": {
+      "phone_comparison": "matches_oldest_visible_date",
+      "checked_at": "2026-10-02T08:00:00Z",
+      "baseline": {"oldest_utc": "2021-05-04T10:00:00Z"}
+    }
+  }
+}
+```
+
+A chat key must match the `chat_jid` argument exactly. `checked_at` and `updated_at` are RFC 3339 times. When `checked_at` is empty, the server uses `updated_at` and reports it as `recorded_at`. `oldest_utc` is the oldest message or post that the phone shows, in RFC 3339 or `YYYY-MM-DD HH:MM:SS+00:00` form.
+
+`phone_comparison` takes one of three values:
+
+- `matches_oldest_visible_date` sets `phone_verification.status` and `completeness` to `oldest_date_verified`. It applies only when local coverage has messages and its oldest message falls on the same UTC date as `oldest_utc`.
+- `not_available_on_phone` sets the status to `not_located_on_phone` and `completeness` to `unverified`.
+- `status_retention_only` sets the status to `retention_only` and leaves `completeness` unchanged.
+
+The server ignores any other value. When a check applies, the result also has `best_effort` set to true. A check covers only the oldest visible boundary. It does not show that every later message is stored.
+
 Exports are bounded JSON files in the private attachment store. Their DTOs exclude media encryption keys, CDN access material and raw protocol data. Participant exports use the same private file mechanism. Files over 10 MiB are rejected; reduce the page limit or narrow filters.
 
 ### Attachments through MCP
