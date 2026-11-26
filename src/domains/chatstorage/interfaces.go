@@ -9,6 +9,13 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 )
 
+// DeliveredReplyLookup is an optional reverse route for repositories that
+// retain delivered agent replies. Other repositories use normal contact routing.
+type DeliveredReplyLookup interface {
+	// GetLatestOutgoingChatwootMessageLinkByChat finds a delivered agent reply in the exact scope.
+	GetLatestOutgoingChatwootMessageLinkByChat(deviceID, waChatJID string, configID int64, accountID, inboxID int) (*ChatwootMessageLink, error)
+}
+
 type IChatStorageRepository interface {
 	// Chat operations
 	CreateMessage(ctx context.Context, evt *events.Message) error
@@ -18,6 +25,10 @@ type IChatStorageRepository interface {
 	// CreateIncomingCallRecord persists an incoming call as a synthetic message (media_type "call") for chat history.
 	CreateIncomingCallRecord(ctx context.Context, evt *events.CallOffer, autoRejected bool) error
 	StoreChat(chat *Chat) error
+	// UpdateGroupSubject renames an existing group for one device and reports whether the row exists.
+	UpdateGroupSubject(deviceID, groupJID, subject string) (bool, error)
+	// FillGroupSubject replaces a generated or empty name after a background lookup.
+	FillGroupSubject(deviceID, groupJID, subject string) error
 	// GetChat matches a JID on any device. Not for user-facing flows: use
 	// GetChatByDevice.
 	GetChat(jid string) (*Chat, error)
@@ -30,6 +41,9 @@ type IChatStorageRepository interface {
 	StoreMessage(message *Message) error
 	StoreMessageEdit(edit *MessageEdit) error
 	StoreMessagesBatch(messages []*Message) error
+	// UpdateMessageMedia replaces only the media location and integrity fields of
+	// one device's stored message, leaving content and every other field as is.
+	UpdateMessageMedia(deviceID, chatJID, messageID string, media MessageMedia) error
 	// GetMessageByID matches an ID on any device and returns an arbitrary one of
 	// the rows. Each device stores its own copy (with its own "from me" flag and
 	// media keys), so user-facing flows must use the device-scoped lookups below.
@@ -43,6 +57,8 @@ type IChatStorageRepository interface {
 	// when the chat has no stored messages.
 	GetOldestMessageByDevice(deviceID, chatJID string) (*Message, error)
 	SearchMessages(deviceID, chatJID, searchText string, limit int) ([]*Message, error) // Database-level search with device isolation
+	// GetCallRecords lists call records (media_type "call") newest first, plus the unpaginated total.
+	GetCallRecords(filter *CallRecordFilter) ([]*Message, int64, error)
 	DeleteMessage(id, chatJID string) error
 	DeleteMessageByDevice(deviceID, id, chatJID string) error
 	StoreSentMessageWithContext(ctx context.Context, messageID string, senderJID string, recipientJID string, content string, timestamp time.Time, msg *waE2E.Message) error
@@ -56,7 +72,10 @@ type IChatStorageRepository interface {
 	// Chatwoot correlation operations
 	UpsertChatwootMessageLink(link *ChatwootMessageLink) error
 	GetChatwootMessageLinkByWhatsAppID(deviceID, waMessageID string) (*ChatwootMessageLink, error)
-	GetChatwootMessageLinkByChatwootID(deviceID string, chatwootMessageID int) (*ChatwootMessageLink, error)
+	// ListChatwootMessageLinksByChatwootID returns every link of a Chatwoot
+	// message, oldest first: a reply with several attachments goes out as one
+	// WhatsApp message per attachment.
+	ListChatwootMessageLinksByChatwootID(deviceID string, chatwootMessageID int) ([]*ChatwootMessageLink, error)
 	// GetChatwootMessageLinkForReply returns the link of a quoted Chatwoot
 	// message within the filter's scope, or nil when there is none.
 	GetChatwootMessageLinkForReply(filter ChatwootReplyLinkFilter) (*ChatwootMessageLink, error)

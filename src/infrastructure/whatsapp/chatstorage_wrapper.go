@@ -57,6 +57,20 @@ func (r *deviceChatStorage) StoreChat(chat *domainChatStorage.Chat) error {
 	return r.base.StoreChat(r.withDeviceChat(chat))
 }
 
+func (r *deviceChatStorage) UpdateGroupSubject(deviceID, groupJID, subject string) (bool, error) {
+	if deviceID == "" {
+		deviceID = r.deviceID
+	}
+	return r.base.UpdateGroupSubject(deviceID, groupJID, subject)
+}
+
+func (r *deviceChatStorage) FillGroupSubject(deviceID, groupJID, subject string) error {
+	if deviceID == "" {
+		deviceID = r.deviceID
+	}
+	return r.base.FillGroupSubject(deviceID, groupJID, subject)
+}
+
 func (r *deviceChatStorage) GetChat(jid string) (*domainChatStorage.Chat, error) {
 	return r.base.GetChatByDevice(r.deviceID, jid)
 }
@@ -93,6 +107,13 @@ func (r *deviceChatStorage) StoreMessageEdit(edit *domainChatStorage.MessageEdit
 
 func (r *deviceChatStorage) StoreMessagesBatch(messages []*domainChatStorage.Message) error {
 	return r.base.StoreMessagesBatch(messages)
+}
+
+func (r *deviceChatStorage) UpdateMessageMedia(deviceID, chatJID, messageID string, media domainChatStorage.MessageMedia) error {
+	if deviceID == "" {
+		deviceID = r.deviceID
+	}
+	return r.base.UpdateMessageMedia(deviceID, chatJID, messageID, media)
 }
 
 // GetMessageByID is scoped to this device, like every other read on the
@@ -148,6 +169,13 @@ func (r *deviceChatStorage) SearchMessages(deviceID, chatJID, searchText string,
 	return r.base.SearchMessages(targetDeviceID, chatJID, searchText, limit)
 }
 
+func (r *deviceChatStorage) GetCallRecords(filter *domainChatStorage.CallRecordFilter) ([]*domainChatStorage.Message, int64, error) {
+	if filter != nil && filter.DeviceID == "" {
+		filter.DeviceID = r.deviceID
+	}
+	return r.base.GetCallRecords(filter)
+}
+
 func (r *deviceChatStorage) DeleteMessage(id, chatJID string) error {
 	return r.base.DeleteMessageByDevice(r.deviceID, id, chatJID)
 }
@@ -171,12 +199,12 @@ func (r *deviceChatStorage) GetChatwootMessageLinkByWhatsAppID(deviceID, waMessa
 	return r.base.GetChatwootMessageLinkByWhatsAppID(targetDeviceID, waMessageID)
 }
 
-func (r *deviceChatStorage) GetChatwootMessageLinkByChatwootID(deviceID string, chatwootMessageID int) (*domainChatStorage.ChatwootMessageLink, error) {
+func (r *deviceChatStorage) ListChatwootMessageLinksByChatwootID(deviceID string, chatwootMessageID int) ([]*domainChatStorage.ChatwootMessageLink, error) {
 	targetDeviceID := deviceID
 	if targetDeviceID == "" {
 		targetDeviceID = r.deviceID
 	}
-	return r.base.GetChatwootMessageLinkByChatwootID(targetDeviceID, chatwootMessageID)
+	return r.base.ListChatwootMessageLinksByChatwootID(targetDeviceID, chatwootMessageID)
 }
 
 func (r *deviceChatStorage) GetChatwootMessageLinkForReply(filter domainChatStorage.ChatwootReplyLinkFilter) (*domainChatStorage.ChatwootMessageLink, error) {
@@ -240,6 +268,18 @@ func (r *deviceChatStorage) GetLatestUnreadChatwootMessageLinkByChat(deviceID, w
 		targetDeviceID = r.deviceID
 	}
 	return r.base.GetLatestUnreadChatwootMessageLinkByChat(targetDeviceID, waChatJID)
+}
+
+func (r *deviceChatStorage) GetLatestOutgoingChatwootMessageLinkByChat(deviceID, waChatJID string, configID int64, accountID, inboxID int) (*domainChatStorage.ChatwootMessageLink, error) {
+	return latestDeliveredChatwootReply(r.base, deviceID, waChatJID, configID, accountID, inboxID)
+}
+
+func latestDeliveredChatwootReply(repo domainChatStorage.IChatStorageRepository, deviceID, chatJID string, configID int64, accountID, inboxID int) (*domainChatStorage.ChatwootMessageLink, error) {
+	lookup, ok := repo.(domainChatStorage.DeliveredReplyLookup)
+	if !ok {
+		return nil, nil
+	}
+	return lookup.GetLatestOutgoingChatwootMessageLinkByChat(deviceID, chatJID, configID, accountID, inboxID)
 }
 
 func (r *deviceChatStorage) EnqueueChatwootForwardEvent(event *domainChatStorage.ChatwootForwardEvent) error {

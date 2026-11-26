@@ -1,8 +1,10 @@
 package usecase
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/sirupsen/logrus"
 	"go.mau.fi/whatsmeow"
@@ -301,13 +303,20 @@ func (service serviceGroup) participantToJID(ctx context.Context, participants [
 
 	var participantsJID []types.JID
 	for _, participant := range participants {
-		formattedParticipant := participant + config.WhatsappTypeUser
-
-		if !utils.IsOnWhatsapp(client, formattedParticipant) {
+		participantJID, err := types.ParseJID(participant + config.WhatsappTypeUser)
+		if err != nil {
 			return nil, pkgError.ErrUserNotRegistered
 		}
 
-		if participantJID, err := types.ParseJID(formattedParticipant); err == nil {
+		participantJID, onWhatsapp, err := utils.ResolveOnWhatsapp(client, participantJID)
+		if err != nil {
+			return nil, err
+		}
+		if !onWhatsapp {
+			return nil, pkgError.ErrUserNotRegistered
+		}
+		// Two spellings of one number resolve to the same JID.
+		if !slices.Contains(participantsJID, participantJID) {
 			participantsJID = append(participantsJID, participantJID)
 		}
 	}
@@ -344,6 +353,16 @@ func (service serviceGroup) SetGroupPhoto(ctx context.Context, request domainGro
 			request.Photo.Size, processedImageBuffer.Len())
 
 		// Convert buffer to byte slice
+		photoBytes = processedImageBuffer.Bytes()
+	} else if request.PhotoURL != "" {
+		imageData, _, err := utils.DownloadImageFromURL(ctx, request.PhotoURL)
+		if err != nil {
+			return pictureID, pkgError.InternalServerError(fmt.Sprintf("failed to download image from URL %v", err))
+		}
+		processedImageBuffer, err := utils.ProcessGroupPhotoReader(bytes.NewReader(imageData))
+		if err != nil {
+			return pictureID, err
+		}
 		photoBytes = processedImageBuffer.Bytes()
 	}
 
@@ -549,14 +568,15 @@ func groupParticipantPhoneJID(ctx context.Context, client *whatsmeow.Client, p t
 // string for API output, using a single LID→PN resolution per participant.
 func wireParticipantLookupAndPhone(ctx context.Context, client *whatsmeow.Client, wire types.JID) (lookupJID types.JID, phoneDigits string) {
 	resolved := utils.ResolveLIDToPhone(ctx, wire, client)
-	phoneDigits = resolved.User
 	if resolved.Server != types.HiddenUserServer {
-		return resolved, phoneDigits
+		return resolved, resolved.User
 	}
-	return wire, phoneDigits
+	// Still a LID: its user part is not a phone number, so report no phone.
+	return wire, ""
 }
 
-// groupParticipantPhoneUser is the numeric phone for API responses (digits), using PhoneNumber when LID resolution fails.
+// groupParticipantPhoneUser is the numeric phone for API responses (digits), using PhoneNumber when LID
+// resolution fails. It is empty when only the LID is known: the LID user part is not a phone number.
 func groupParticipantPhoneUser(ctx context.Context, client *whatsmeow.Client, p types.GroupParticipant) string {
 	resolved := utils.ResolveLIDToPhone(ctx, p.JID, client)
 	if resolved.Server != types.HiddenUserServer {
@@ -565,7 +585,7 @@ func groupParticipantPhoneUser(ctx context.Context, client *whatsmeow.Client, p 
 	if !p.PhoneNumber.IsEmpty() {
 		return p.PhoneNumber.User
 	}
-	return resolved.User
+	return ""
 }
 
 func resolveParticipantDisplayName(ctx context.Context, client *whatsmeow.Client, seed string, lookupJID types.JID, wireJID types.JID, userInfo map[types.JID]types.UserInfo) string {

@@ -1,6 +1,7 @@
 package chatstorage
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -41,15 +42,15 @@ func TestSQLiteRepositoryStoresAndLooksUpChatwootMessageLinks(t *testing.T) {
 		t.Fatalf("unexpected link by whatsapp id: %+v", byWA)
 	}
 
-	byCW, err := repo.GetChatwootMessageLinkByChatwootID(link.DeviceID, link.ChatwootMessageID)
+	byCW, err := repo.ListChatwootMessageLinksByChatwootID(link.DeviceID, link.ChatwootMessageID)
 	if err != nil {
 		t.Fatalf("lookup by chatwoot id: %v", err)
 	}
-	if byCW == nil {
-		t.Fatal("expected link by chatwoot id")
+	if len(byCW) != 1 {
+		t.Fatalf("links by chatwoot id = %d, want 1", len(byCW))
 	}
-	if byCW.WhatsAppMessageID != "wa-1" || byCW.WhatsAppChatJID != link.WhatsAppChatJID {
-		t.Fatalf("unexpected link by chatwoot id: %+v", byCW)
+	if byCW[0].WhatsAppMessageID != "wa-1" || byCW[0].WhatsAppChatJID != link.WhatsAppChatJID {
+		t.Fatalf("unexpected link by chatwoot id: %+v", byCW[0])
 	}
 
 	link.ChatwootConversationID = 404
@@ -64,6 +65,39 @@ func TestSQLiteRepositoryStoresAndLooksUpChatwootMessageLinks(t *testing.T) {
 	}
 	if updated.ChatwootConversationID != 404 || !updated.IsRead {
 		t.Fatalf("expected updated link, got %+v", updated)
+	}
+}
+
+func TestSQLiteRepositoryListsEveryLinkOfAChatwootMessage(t *testing.T) {
+	repo := newTestSQLiteRepository(t)
+	t0 := time.Date(2026, time.October, 21, 12, 0, 0, 0, time.UTC)
+	// Written out of order: the list follows created_at.
+	for _, l := range []struct {
+		device, id string
+		message    int
+		created    time.Time
+	}{
+		{"dev", "wa-3", 90, t0.Add(2 * time.Second)},
+		{"dev", "wa-1", 90, t0},
+		{"dev", "wa-2", 90, t0.Add(time.Second)},
+		{"other", "wa-9", 90, t0},
+		{"dev", "wa-8", 91, t0},
+	} {
+		if err := repo.UpsertChatwootMessageLink(&domainChatStorage.ChatwootMessageLink{DeviceID: l.device, WhatsAppMessageID: l.id,
+			WhatsAppChatJID: "5500900000001@s.whatsapp.net", ChatwootMessageID: l.message, Direction: "outgoing", CreatedAt: l.created}); err != nil {
+			t.Fatalf("upsert %s: %v", l.id, err)
+		}
+	}
+	links, err := repo.ListChatwootMessageLinksByChatwootID("dev", 90)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	ids := []string{}
+	for _, link := range links {
+		ids = append(ids, link.WhatsAppMessageID)
+	}
+	if fmt.Sprint(ids) != "[wa-1 wa-2 wa-3]" {
+		t.Fatalf("links = %v, want [wa-1 wa-2 wa-3]", ids)
 	}
 }
 
@@ -531,5 +565,69 @@ func TestSQLiteRepositoryReplyLinkLookupPicksTheFirstFile(t *testing.T) {
 	}
 	if got := findReplyLink(t, storeReplyLinks(t, replyLink("WA-B", base), replyLink("WA-A", base)), replyLinkFilter()); got != "WA-A" {
 		t.Fatalf("same created_at: got %q, want the lowest WhatsApp id WA-A", got)
+	}
+}
+
+func TestSQLiteRepositoryGetsLatestDeliveredChatwootReplyByChat(t *testing.T) {
+	repo := newTestSQLiteRepository(t)
+	scope := domainChatStorage.ChatwootMessageLink{
+		DeviceID: "device-a", WhatsAppChatJID: "550012345678@s.whatsapp.net",
+		ChatwootConfigID: 3, ChatwootAccountID: 4, ChatwootInboxID: 5,
+		ChatwootMessageID: 6, ChatwootConversationID: 7, Direction: "outgoing", IsRead: true,
+		CreatedAt: time.Date(2026, time.June, 6, 10, 0, 0, 0, time.UTC),
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*domainChatStorage.ChatwootMessageLink)
+	}{
+		{"incoming", func(link *domainChatStorage.ChatwootMessageLink) { link.Direction = "incoming" }},
+		{"another device", func(link *domainChatStorage.ChatwootMessageLink) { link.DeviceID = "device-b" }},
+		{"another chat", func(link *domainChatStorage.ChatwootMessageLink) {
+			link.WhatsAppChatJID = "5500912345678@s.whatsapp.net"
+		}},
+		{"another config", func(link *domainChatStorage.ChatwootMessageLink) { link.ChatwootConfigID++ }},
+		{"legacy config", func(link *domainChatStorage.ChatwootMessageLink) { link.ChatwootConfigID = 0 }},
+		{"another account", func(link *domainChatStorage.ChatwootMessageLink) { link.ChatwootAccountID++ }},
+		{"another inbox", func(link *domainChatStorage.ChatwootMessageLink) { link.ChatwootInboxID++ }},
+		{"live mirror", func(link *domainChatStorage.ChatwootMessageLink) { link.SourceID = "WAID:live" }},
+		{"history sync", func(link *domainChatStorage.ChatwootMessageLink) { link.SourceID = "WAID:sync" }},
+		{"Postgres importer", func(link *domainChatStorage.ChatwootMessageLink) { link.SourceID = "WAID:import" }},
+		{"no message", func(link *domainChatStorage.ChatwootMessageLink) { link.ChatwootMessageID = 0 }},
+		{"no conversation", func(link *domainChatStorage.ChatwootMessageLink) { link.ChatwootConversationID = 0 }},
+	} {
+		link := scope
+		link.WhatsAppMessageID = tc.name
+		tc.change(&link)
+		if err := repo.UpsertChatwootMessageLink(&link); err != nil {
+			t.Fatalf("store %s: %v", tc.name, err)
+		}
+	}
+
+	lookup := func() *domainChatStorage.ChatwootMessageLink {
+		t.Helper()
+		link, err := repo.GetLatestOutgoingChatwootMessageLinkByChat(
+			scope.DeviceID, scope.WhatsAppChatJID, scope.ChatwootConfigID, scope.ChatwootAccountID, scope.ChatwootInboxID,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return link
+	}
+	if got := lookup(); got != nil {
+		t.Fatalf("lookup matched ineligible link %+v", got)
+	}
+
+	latest, older := scope, scope
+	latest.WhatsAppMessageID = "latest"
+	latest.CreatedAt = scope.CreatedAt.Add(-time.Hour)
+	older.WhatsAppMessageID = "older"
+	older.CreatedAt = latest.CreatedAt.Add(-time.Hour)
+	for _, link := range []*domainChatStorage.ChatwootMessageLink{&latest, &older} {
+		if err := repo.UpsertChatwootMessageLink(link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := lookup(); got == nil || got.WhatsAppMessageID != latest.WhatsAppMessageID {
+		t.Fatalf("lookup = %+v, want %s", got, latest.WhatsAppMessageID)
 	}
 }

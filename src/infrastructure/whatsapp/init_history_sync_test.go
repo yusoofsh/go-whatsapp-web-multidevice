@@ -1,6 +1,7 @@
 package whatsapp
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
@@ -77,6 +78,7 @@ func TestConfigureHistorySyncPropsAllocatesMissingConfig(t *testing.T) {
 
 func TestConfigureDevicePropsAppliesHistorySync(t *testing.T) {
 	props := useHistorySyncSettings(t, true, 90, 0)
+	devicePropsOnce = sync.Once{}
 
 	configureDeviceProps()
 

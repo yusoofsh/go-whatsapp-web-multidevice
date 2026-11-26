@@ -66,6 +66,25 @@ func TestSchemas(t *testing.T) {
 		{"send poll max_answer zero", sendSchema, `{"type":"poll","phone":"628","question":"q","options":["a","b"],"max_answer":0}`, true},
 		{"send forward duration allowed", sendSchema, `{"type":"forward","phone":"628","message_id":"M1","duration":604800}`, false},
 		{"send forward duration not allowed", sendSchema, `{"type":"forward","phone":"628","message_id":"M1","duration":3600}`, true},
+		{"send interactive buttons ok", sendSchema, `{"type":"interactive","phone":"628","body":"b","buttons":[{"name":"quick_reply","params":{"display_text":"Y","id":"y"}}]}`, false},
+		{"send interactive cards ok", sendSchema, `{"type":"interactive","phone":"628","body":"b","cards":[{"body":"a","buttons":[{"name":"quick_reply","params":{}}]},{"body":"b","buttons":[{"name":"quick_reply","params":{}}]}]}`, false},
+		{"send interactive missing body", sendSchema, `{"type":"interactive","phone":"628","buttons":[{"name":"quick_reply","params":{}}]}`, true},
+		{"send interactive neither buttons nor cards", sendSchema, `{"type":"interactive","phone":"628","body":"b"}`, true},
+		{"send interactive both buttons and cards", sendSchema, `{"type":"interactive","phone":"628","body":"b","buttons":[{"name":"quick_reply","params":{}}],"cards":[{"body":"a","buttons":[{"name":"quick_reply","params":{}}]},{"body":"b","buttons":[{"name":"quick_reply","params":{}}]}]}`, true},
+		{"send interactive unknown button", sendSchema, `{"type":"interactive","phone":"628","body":"b","buttons":[{"name":"fax","params":{}}]}`, true},
+		{"send interactive params not object", sendSchema, `{"type":"interactive","phone":"628","body":"b","buttons":[{"name":"quick_reply","params":"x"}]}`, true},
+		{"send interactive card unknown button", sendSchema, `{"type":"interactive","phone":"628","body":"b","cards":[{"body":"a","buttons":[{"name":"fax","params":{}}]},{"body":"b","buttons":[{"name":"quick_reply","params":{}}]}]}`, true},
+		{"send interactive card send_location", sendSchema, `{"type":"interactive","phone":"628","body":"b","cards":[{"body":"a","buttons":[{"name":"send_location","params":{}}]},{"body":"b","buttons":[{"name":"quick_reply","params":{}}]}]}`, true},
+		{"send presence ok without phone", sendSchema, `{"type":"presence","presence":"available"}`, false},
+		{"send presence missing value", sendSchema, `{"type":"presence"}`, true},
+		{"send presence bad value", sendSchema, `{"type":"presence","presence":"busy"}`, true},
+		{"send chat_presence ok", sendSchema, `{"type":"chat_presence","phone":"628","action":"start"}`, false},
+		{"send chat_presence missing action", sendSchema, `{"type":"chat_presence","phone":"628"}`, true},
+		{"send chat_presence bad action", sendSchema, `{"type":"chat_presence","phone":"628","action":"record"}`, true},
+		{"send chat_presence missing phone", sendSchema, `{"type":"chat_presence","action":"start"}`, true},
+		{"send text duration allowed", sendSchema, `{"type":"text","phone":"628","message":"hi","duration":86400}`, false},
+		{"send image reply ok", sendSchema, `{"type":"image","phone":"628","image_url":"http://x/a.png","reply_message_id":"R1"}`, false},
+		{"send interactive one card", sendSchema, `{"type":"interactive","phone":"628","body":"b","cards":[{"body":"a","buttons":[{"name":"quick_reply","params":{}}]}]}`, true},
 
 		// ---- whatsapp_schedule ----
 		{"schedule list", scheduleSchema, `{"action":"list"}`, false},
@@ -101,6 +120,14 @@ func TestSchemas(t *testing.T) {
 		{"chat archive ok", chatSchema, `{"action":"archive","chat_jid":"628@s.whatsapp.net","archived":true}`, false},
 		{"chat archive missing flag", chatSchema, `{"action":"archive","chat_jid":"628@s.whatsapp.net"}`, true},
 		{"chat bad action", chatSchema, `{"action":"nuke"}`, true},
+		{"chat pin ok", chatSchema, `{"action":"pin","chat_jid":"628@s.whatsapp.net","pinned":false}`, false},
+		{"chat pin missing flag defaults to pinned", chatSchema, `{"action":"pin","chat_jid":"628@s.whatsapp.net"}`, false},
+		{"chat set_disappearing ok", chatSchema, `{"action":"set_disappearing","chat_jid":"628@s.whatsapp.net","timer_seconds":0}`, false},
+		{"chat set_disappearing missing timer", chatSchema, `{"action":"set_disappearing","chat_jid":"628@s.whatsapp.net"}`, true},
+		{"chat set_disappearing bad timer", chatSchema, `{"action":"set_disappearing","chat_jid":"628@s.whatsapp.net","timer_seconds":3600}`, true},
+		{"chat request_history ok", chatSchema, `{"action":"request_history","chat_jid":"628@s.whatsapp.net"}`, false},
+		{"chat request_history missing jid", chatSchema, `{"action":"request_history"}`, true},
+		{"chat request_history count over max", chatSchema, `{"action":"request_history","chat_jid":"628@s.whatsapp.net","count":501}`, true},
 		{"chat list_chats limit at max", chatSchema, `{"action":"list_chats","limit":100}`, false},
 		{"chat list_chats limit over max", chatSchema, `{"action":"list_chats","limit":101}`, true},
 		{"chat list_chats limit zero", chatSchema, `{"action":"list_chats","limit":0}`, true},
@@ -130,6 +157,17 @@ func TestSchemas(t *testing.T) {
 		// ---- whatsapp_group ----
 		{"group create ok", groupSchema, `{"action":"create","title":"T","participants":["628"]}`, false},
 		{"group create missing title", groupSchema, `{"action":"create"}`, true},
+		{"group create missing participants", groupSchema, `{"action":"create","title":"T"}`, true},
+		{"group info_from_link ok", groupSchema, `{"action":"info_from_link","invite_link":"https://chat.whatsapp.com/x"}`, false},
+		{"group info_from_link missing link", groupSchema, `{"action":"info_from_link"}`, true},
+		{"group set_photo ok", groupSchema, `{"action":"set_photo","group_id":"123@g.us","photo_url":"https://x/p.jpg"}`, false},
+		{"group set_photo missing url", groupSchema, `{"action":"set_photo","group_id":"123@g.us"}`, true},
+		{"group remove_photo ok", groupSchema, `{"action":"remove_photo","group_id":"123@g.us"}`, false},
+		{"group remove_photo missing id", groupSchema, `{"action":"remove_photo"}`, true},
+		{"group create empty participants", groupSchema, `{"action":"create","title":"T","participants":[]}`, true},
+		{"group add blank participant", groupSchema, `{"action":"add_participants","group_id":"123@g.us","participants":[""]}`, true},
+		{"group join empty link", groupSchema, `{"action":"join_with_link","invite_link":""}`, true},
+		{"group set_photo empty url", groupSchema, `{"action":"set_photo","group_id":"123@g.us","photo_url":""}`, true},
 		{"group join ok", groupSchema, `{"action":"join_with_link","invite_link":"http://chat.whatsapp.com/x"}`, false},
 		{"group join missing link", groupSchema, `{"action":"join_with_link"}`, true},
 		{"group leave ok", groupSchema, `{"action":"leave","group_id":"123@g.us"}`, false},
@@ -162,11 +200,29 @@ func TestSchemas(t *testing.T) {
 		{"app logout ok", appSchema, `{"action":"logout"}`, false},
 		{"app reconnect ok", appSchema, `{"action":"reconnect"}`, false},
 		{"app bad action", appSchema, `{"action":"restart"}`, true},
+
+		// ---- whatsapp_user ----
+		{"user info ok", userSchema, `{"action":"info","phone":"628"}`, false},
+		{"user info missing phone", userSchema, `{"action":"info"}`, true},
+		{"user check ok", userSchema, `{"action":"check","phone":"628"}`, false},
+		{"user check missing phone", userSchema, `{"action":"check"}`, true},
+		{"user business_profile missing phone", userSchema, `{"action":"business_profile"}`, true},
+		{"user avatar ok", userSchema, `{"action":"avatar","phone":"628","is_preview":true,"is_community":false}`, false},
+		{"user avatar missing phone", userSchema, `{"action":"avatar"}`, true},
+		{"user subscribe_presence missing phone", userSchema, `{"action":"subscribe_presence"}`, true},
+		{"user set_push_name ok", userSchema, `{"action":"set_push_name","push_name":"Aldo"}`, false},
+		{"user set_push_name missing name", userSchema, `{"action":"set_push_name"}`, true},
+		{"user set_push_name empty name", userSchema, `{"action":"set_push_name","push_name":""}`, true},
+		{"user my_privacy ok", userSchema, `{"action":"my_privacy"}`, false},
+		{"user my_groups ok", userSchema, `{"action":"my_groups"}`, false},
+		{"user my_newsletters ok", userSchema, `{"action":"my_newsletters"}`, false},
+		{"user my_contacts_detailed ok", userSchema, `{"action":"my_contacts_detailed","device_id":"dev2"}`, false},
+		{"user bad action", userSchema, `{"action":"change_avatar"}`, true},
 	}
 
 	// compile each schema once
 	compiled := map[string]*jsonschema.Schema{}
-	for _, raw := range []string{sendSchema, scheduleSchema, messageSchema, chatSchema, groupSchema, appSchema, newsletterSchema} {
+	for _, raw := range []string{sendSchema, scheduleSchema, messageSchema, chatSchema, groupSchema, appSchema, newsletterSchema, userSchema} {
 		compiled[raw] = compileSchema(t, raw)
 	}
 

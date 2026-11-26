@@ -65,7 +65,9 @@ func (r *routeAuthRepo) GetChatwootDeviceConfigByInbox(accountID, inboxID int) (
 }
 
 func (r *routeAuthRepo) ListChatwootDeviceConfigs() ([]*domainChatStorage.ChatwootDeviceConfig, error) {
-	return r.configs, nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.configs, r.lookupErr
 }
 
 func (r *routeAuthRepo) CountChatwootDeviceConfigs() (int, error) {
@@ -83,14 +85,15 @@ func (r *routeAuthRepo) GetLatestChatwootMessageLinkByConversation(conversationI
 	return nil, nil
 }
 
-func (r *routeAuthRepo) GetChatwootMessageLinkByChatwootID(deviceID string, chatwootMessageID int) (*domainChatStorage.ChatwootMessageLink, error) {
+func (r *routeAuthRepo) ListChatwootMessageLinksByChatwootID(deviceID string, chatwootMessageID int) ([]*domainChatStorage.ChatwootMessageLink, error) {
+	var links []*domainChatStorage.ChatwootMessageLink
 	for _, link := range r.links {
 		if link.DeviceID == deviceID && link.ChatwootMessageID == chatwootMessageID {
 			cloned := *link
-			return &cloned, nil
+			links = append(links, &cloned)
 		}
 	}
-	return nil, nil
+	return links, nil
 }
 
 func (r *routeAuthRepo) UpsertChatwootMessageLink(link *domainChatStorage.ChatwootMessageLink) error {
@@ -115,7 +118,7 @@ func (s *routeAuthSend) SendText(ctx context.Context, request domainSend.Message
 		device = instance.ID()
 	}
 	s.sends = append(s.sends, device+" -> "+request.Phone)
-	return domainSend.GenericResponse{MessageID: fmt.Sprintf("WA-%d", len(s.sends)), Status: "ok"}, nil
+	return domainSend.GenericResponse{RecipientJID: chatwootLinkChatJID(request.Phone), MessageID: fmt.Sprintf("WA-%d", len(s.sends)), Status: "ok"}, nil
 }
 
 func (s *routeAuthSend) taken() []string {
@@ -502,6 +505,10 @@ type routeAuthFailingRepo struct {
 }
 
 func (routeAuthFailingRepo) GetChatwootDeviceConfigByIdentifier(string) (*domainChatStorage.ChatwootDeviceConfig, error) {
+	return nil, fmt.Errorf("database is locked")
+}
+
+func (routeAuthFailingRepo) ListChatwootDeviceConfigs() ([]*domainChatStorage.ChatwootDeviceConfig, error) {
 	return nil, fmt.Errorf("database is locked")
 }
 

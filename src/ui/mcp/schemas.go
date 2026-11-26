@@ -7,206 +7,316 @@ package mcp
 const sendSchema = `{
   "type": "object",
   "required": [
-    "type",
-    "phone"
+    "type"
   ],
   "properties": {
-  "type": {
-    "type": "string",
-    "enum": [
-      "text",
-      "image",
-      "video",
-      "audio",
-      "document",
-      "sticker",
-      "location",
-      "contact",
-      "poll",
-      "link",
-      "forward"
-    ],
-    "description": "Kind of message to send"
-  },
-  "phone": {
-    "type": "string",
-    "description": "Destination phone number or group JID"
-  },
-  "device_id": {
-    "type": "string",
-    "description": "Act as this device instead of the connection default (X-Device-Id header)"
-  },
-  "is_forwarded": {
-    "type": "boolean",
-    "description": "Mark the message as forwarded (default false)"
-  },
-  "message": {
-    "type": "string",
-    "description": "type=text: the text body"
-  },
-  "reply_message_id": {
-    "type": "string",
-    "description": "type=text: message ID to reply to"
-  },
-  "mentions": {
-    "type": "array",
-    "items": {
-      "type": "string"
+    "type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "video",
+        "audio",
+        "document",
+        "sticker",
+        "location",
+        "contact",
+        "poll",
+        "link",
+        "forward",
+        "interactive",
+        "chat_presence",
+        "presence"
+      ],
+      "description": "Kind of message to send"
     },
-    "description": "text/image/video/document: ghost mentions; \"@everyone\" mentions all group participants"
-  },
-  "image_url": {
-    "type": "string",
-    "description": "type=image: URL of the image (fetched server-side)"
-  },
-  "caption": {
-    "type": "string",
-    "description": "image/video/document/link: caption text"
-  },
-  "view_once": {
-    "type": "boolean",
-    "description": "image/video: view-once message (default false)"
-  },
-  "compress": {
-    "type": "boolean",
-    "description": "image (default true) / video (default false): re-encode before sending"
-  },
-  "hd": {
-    "type": "boolean",
-    "description": "image/video: send HD without upscaling (image: 2560px max edge; video: H.264 8-bit YUV 4:2:0 at CRF 23, capped at 1280x1280); overrides compress when true (default false)"
-  },
-  "video_url": {
-    "type": "string",
-    "description": "type=video: URL of the video (mp4/mkv/avi, fetched server-side)"
-  },
-  "gif_playback": {
-    "type": "boolean",
-    "description": "type=video: play as looping GIF (default false)"
-  },
-  "audio_url": {
-    "type": "string",
-    "description": "type=audio: URL of the audio file (fetched server-side)"
-  },
-  "ptt": {
-    "type": "boolean",
-    "description": "type=audio: send as voice note (requires ffmpeg server-side, default false)"
-  },
-  "file_url": {
-    "type": "string",
-    "description": "type=document: URL of the file; MIME type and filename derived server-side"
-  },
-  "sticker_url": {
-    "type": "string",
-    "description": "type=sticker: URL of an image to convert to a WebP sticker"
-  },
-  "latitude": {
-    "type": "string",
-    "description": "type=location: latitude as string"
-  },
-  "longitude": {
-    "type": "string",
-    "description": "type=location: longitude as string"
-  },
-  "contact_name": {
-    "type": "string",
-    "description": "type=contact: contact display name"
-  },
-  "contact_phone": {
-    "type": "string",
-    "description": "type=contact: contact phone number"
-  },
-  "question": {
-    "type": "string",
-    "description": "type=poll: the poll question"
-  },
-  "options": {
-    "type": "array",
-    "items": {
-      "type": "string"
+    "phone": {
+      "type": "string",
+      "description": "Destination phone number or group JID (required for every type except presence)"
     },
-    "minItems": 2,
-    "description": "type=poll: poll options (min 2)"
-  },
-  "max_answer": {
-    "type": "integer",
-    "minimum": 1,
-    "description": "type=poll: max selectable options, at most the number of options (default 1)"
-  },
-  "link": {
-    "type": "string",
-    "description": "type=link: the URL to send"
-  },
-  "message_id": {
-    "type": "string",
-    "description": "type=forward: source message ID from chat storage"
-  },
-  "duration": {
-    "type": "integer",
-    "enum": [
-      0,
-      86400,
-      604800,
-      7776000
-    ],
-    "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)"
-  },
-  "force_reupload": {
-    "type": "boolean",
-    "description": "type=forward: re-upload media instead of reusing references (default false)"
-  },
-  "scheduled_at": {
-    "type": "string",
-    "description": "Schedule instead of sending now: RFC3339 time of the first send (must be in the future)"
-  },
-  "timezone": {
-    "type": "string",
-    "description": "IANA timezone (e.g. Asia/Jakarta); required when scheduled_at is set"
-  },
-  "recurrence": {
-    "type": "string",
-    "enum": [
-      "once",
-      "daily",
-      "weekly",
-      "monthly"
-    ],
-    "description": "Repeat pattern for a scheduled send (default once)"
-  },
-  "weekdays": {
-    "type": "array",
-    "items": {
+    "device_id": {
+      "type": "string",
+      "description": "Act as this device instead of the connection default (X-Device-Id header)"
+    },
+    "is_forwarded": {
+      "type": "boolean",
+      "description": "Mark the message as forwarded (default false); ignored for interactive"
+    },
+    "message": {
+      "type": "string",
+      "description": "type=text: the text body"
+    },
+    "reply_message_id": {
+      "type": "string",
+      "description": "text/image/video/audio/document/sticker: message ID to reply to"
+    },
+    "mentions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "text/image/video/document: ghost mentions; \"@everyone\" mentions all group participants"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "type=image: URL of the image (fetched server-side)"
+    },
+    "caption": {
+      "type": "string",
+      "description": "image/video/document/link: caption text"
+    },
+    "view_once": {
+      "type": "boolean",
+      "description": "image/video: view-once message (default false)"
+    },
+    "compress": {
+      "type": "boolean",
+      "description": "image (default true) / video (default false): re-encode before sending"
+    },
+    "hd": {
+      "type": "boolean",
+      "description": "image/video: send HD without upscaling (image: 2560px max edge; video: H.264 8-bit YUV 4:2:0 at CRF 23, capped at 1280x1280); overrides compress when true (default false)"
+    },
+    "video_url": {
+      "type": "string",
+      "description": "type=video: URL of the video (mp4/mkv/avi, fetched server-side)"
+    },
+    "gif_playback": {
+      "type": "boolean",
+      "description": "type=video: play as looping GIF (default false)"
+    },
+    "allow_reshare": {
+      "type": "boolean",
+      "description": "text/image/video: let viewers reshare the status; requires phone status@broadcast (default false)"
+    },
+    "audio_url": {
+      "type": "string",
+      "description": "type=audio: URL of the audio file (fetched server-side)"
+    },
+    "ptt": {
+      "type": "boolean",
+      "description": "type=audio: send as voice note (requires ffmpeg server-side, default false)"
+    },
+    "file_url": {
+      "type": "string",
+      "description": "type=document: URL of the file; MIME type and filename derived server-side"
+    },
+    "sticker_url": {
+      "type": "string",
+      "description": "type=sticker: URL of an image to convert to a WebP sticker"
+    },
+    "latitude": {
+      "type": "string",
+      "description": "type=location: latitude as string"
+    },
+    "longitude": {
+      "type": "string",
+      "description": "type=location: longitude as string"
+    },
+    "contact_name": {
+      "type": "string",
+      "description": "type=contact: contact display name"
+    },
+    "contact_phone": {
+      "type": "string",
+      "description": "type=contact: contact phone number"
+    },
+    "question": {
+      "type": "string",
+      "description": "type=poll: the poll question"
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 2,
+      "description": "type=poll: poll options (min 2)"
+    },
+    "max_answer": {
       "type": "integer",
-      "minimum": 0,
-      "maximum": 6
+      "minimum": 1,
+      "description": "type=poll: max selectable options, at most the number of options (default 1)"
     },
-    "uniqueItems": true,
-    "description": "recurrence=weekly (required): days to send, 0=Sunday through 6=Saturday"
-  },
-  "day_of_month": {
-    "type": "integer",
-    "minimum": 1,
-    "maximum": 31,
-    "description": "recurrence=monthly (required): day to send, clamped to the month's last day"
-  },
-  "end_at": {
-    "type": "string",
-    "description": "Recurring only: RFC3339 time after which no more sends happen"
-  },
-  "occurrence_limit": {
-    "type": "integer",
-    "minimum": 1,
-    "description": "Recurring only: stop after this many sends"
-  },
-  "media_id": {
-    "type": "string",
-    "minLength": 36,
-    "maxLength": 36,
-    "description": "Attachment staged by whatsapp_media; replaces the matching media URL and is scoped to this device"
-  },
-  "allow_reshare": {
-    "type": "boolean",
-    "description": "text/image/video: let viewers reshare the status; requires phone status@broadcast (default false)"
-  }
+    "link": {
+      "type": "string",
+      "description": "type=link: the URL to send"
+    },
+    "message_id": {
+      "type": "string",
+      "description": "type=forward: source message ID from chat storage"
+    },
+    "duration": {
+      "type": "integer",
+      "enum": [
+        0,
+        86400,
+        604800,
+        7776000
+      ],
+      "description": "Disappearing timer seconds for the sent message (0, 86400, 604800, 7776000); all types except interactive, chat_presence and presence"
+    },
+    "presence": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable"
+      ],
+      "description": "type=presence: set this account online (available) or offline (unavailable)"
+    },
+    "force_reupload": {
+      "type": "boolean",
+      "description": "type=forward: re-upload media instead of reusing references (default false)"
+    },
+    "body": {
+      "type": "string",
+      "description": "type=interactive: message body text (max 4096 bytes)"
+    },
+    "footer": {
+      "type": "string",
+      "description": "type=interactive: optional footer text (max 256 bytes)"
+    },
+    "buttons": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "params"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "enum": [
+              "quick_reply",
+              "cta_url",
+              "cta_copy",
+              "cta_call",
+              "single_select",
+              "send_location"
+            ]
+          },
+          "params": {
+            "type": "object"
+          }
+        }
+      },
+      "description": "type=interactive: native-flow buttons; use this or cards, not both. params per name: quick_reply {display_text,id}, cta_url {display_text,url}, cta_copy {display_text,copy_code}, cta_call {display_text,phone_number}, single_select {title,sections:[{title,rows:[{id,title}]}]}, send_location {} (must be the only button)"
+    },
+    "cards": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": [
+          "body",
+          "buttons"
+        ],
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "footer": {
+            "type": "string"
+          },
+          "image_base64": {
+            "type": "string",
+            "description": "raw base64 JPEG/PNG, no data-URL prefix"
+          },
+          "buttons": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "items": {
+              "type": "object",
+              "required": [
+                "name",
+                "params"
+              ],
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "enum": [
+                    "quick_reply",
+                    "cta_url",
+                    "cta_copy",
+                    "cta_call",
+                    "single_select"
+                  ]
+                },
+                "params": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "description": "type=interactive: image carousel of 2-10 cards, each with 1-10 buttons shaped like top-level buttons (send_location is not allowed in cards); use this or buttons, not both"
+    },
+    "scheduled_at": {
+      "type": "string",
+      "description": "Schedule instead of sending now: RFC3339 time of the first send (must be in the future); not supported for interactive, chat_presence or presence"
+    },
+    "timezone": {
+      "type": "string",
+      "description": "IANA timezone (e.g. Asia/Jakarta); required when scheduled_at is set"
+    },
+    "recurrence": {
+      "type": "string",
+      "enum": [
+        "once",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "description": "Repeat pattern for a scheduled send (default once)"
+    },
+    "weekdays": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 6
+      },
+      "uniqueItems": true,
+      "description": "recurrence=weekly (required): days to send, 0=Sunday through 6=Saturday"
+    },
+    "day_of_month": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 31,
+      "description": "recurrence=monthly (required): day to send, clamped to the month's last day"
+    },
+    "end_at": {
+      "type": "string",
+      "description": "Recurring only: RFC3339 time after which no more sends happen"
+    },
+    "occurrence_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Recurring only: stop after this many sends"
+    },
+    "media_id": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36,
+      "description": "Attachment staged by whatsapp_media; replaces the matching media URL and is scoped to this device"
+    },
+    "action": {
+      "type": "string",
+      "enum": [
+        "start",
+        "stop"
+      ],
+      "description": "type=chat_presence: start or stop the typing indicator (alias of chat_presence)"
+    }
   },
   "allOf": [
     {
@@ -461,25 +571,188 @@ const sendSchema = `{
           "message_id"
         ]
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "interactive"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "body"
+        ],
+        "oneOf": [
+          {
+            "required": [
+              "buttons"
+            ]
+          },
+          {
+            "required": [
+              "cards"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "chat_presence"
+          }
+        }
+      },
+      "then": {
+        "anyOf": [
+          {
+            "required": [
+              "action"
+            ]
+          },
+          {
+            "required": [
+              "chat_presence"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "presence"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "presence"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "text",
+              "image",
+              "video",
+              "audio",
+              "document",
+              "sticker",
+              "location",
+              "contact",
+              "poll",
+              "link",
+              "forward",
+              "interactive",
+              "chat_presence"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "phone"
+        ]
+      }
     }
   ]
 }`
 
 const scheduleSchema = `{
   "type": "object",
-  "required": ["action"],
+  "required": [
+    "action"
+  ],
   "properties": {
-    "action": {"type": "string", "enum": ["list", "get", "pause", "resume", "cancel"]},
-    "schedule_id": {"type": "string"},
-    "status": {"type": "string", "enum": ["active","running","paused","completed","failed","cancelled"], "description": "action=list: only schedules in this status"},
-    "device_id": {"type": "string"},
-    "search": {"type": "string", "description": "action=list: match recipient or message text"},
-    "message_type": {"type": "string", "enum": ["text","image","file","video","audio","sticker","contact","link","location","poll","forward"], "description": "action=list: only this kind of scheduled send (file = whatsapp_send type=document)"},
-    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "description": "action=list: max rows (default 25)"},
-    "offset": {"type": "integer", "minimum": 0, "description": "action=list: rows to skip (default 0)"}
+    "action": {
+      "type": "string",
+      "enum": [
+        "list",
+        "get",
+        "pause",
+        "resume",
+        "cancel"
+      ]
+    },
+    "schedule_id": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "running",
+        "paused",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "description": "action=list: only schedules in this status"
+    },
+    "device_id": {
+      "type": "string"
+    },
+    "search": {
+      "type": "string",
+      "description": "action=list: match recipient or message text"
+    },
+    "message_type": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "file",
+        "video",
+        "audio",
+        "sticker",
+        "contact",
+        "link",
+        "location",
+        "poll",
+        "forward"
+      ],
+      "description": "action=list: only this kind of scheduled send (file = whatsapp_send type=document)"
+    },
+    "limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100,
+      "description": "action=list: max rows (default 25)"
+    },
+    "offset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "action=list: rows to skip (default 0)"
+    }
   },
   "allOf": [
-    {"if": {"properties": {"action": {"enum": ["get", "pause", "resume", "cancel"]}}}, "then": {"required": ["schedule_id"]}}
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "get",
+              "pause",
+              "resume",
+              "cancel"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "schedule_id"
+        ]
+      }
+    }
   ]
 }`
 
@@ -533,7 +806,8 @@ const messageSchema = `{
   "link": {
     "type": "string",
     "description": "action=edit: optional URL; the edit is sent with a rich link preview for it, like send link (appended to message if absent)"
-  }
+  },
+  "media_type": {"type": "string", "enum": ["image","document"], "description": "action=edit: set when message_id is an image or document; the edit replaces its caption. Cannot be combined with link"}
   },
   "allOf": [
     {
@@ -566,9 +840,11 @@ const chatSchema = `{
         "list_contacts",
         "get_messages",
         "archive",
+        "pin",
+        "set_disappearing",
         "request_history"
       ],
-      "description": "Chat/contact query or archive toggle"
+      "description": "Chat/contact query or chat setting. request_history asks the phone for older messages, anchored at the oldest stored message; they arrive asynchronously via history sync"
     },
     "device_id": {
       "type": "string",
@@ -576,7 +852,7 @@ const chatSchema = `{
     },
     "chat_jid": {
       "type": "string",
-      "description": "get_messages/archive: chat JID (e.g. 628@s.whatsapp.net or group@g.us)"
+      "description": "get_messages/archive/pin/set_disappearing/request_history: chat JID (e.g. 628@s.whatsapp.net or group@g.us)"
     },
     "limit": {
       "type": "integer",
@@ -617,11 +893,25 @@ const chatSchema = `{
       "type": "boolean",
       "description": "archive: true to archive, false to unarchive"
     },
+    "pinned": {
+      "type": "boolean",
+      "description": "pin: true to pin, false to unpin"
+    },
+    "timer_seconds": {
+      "type": "integer",
+      "enum": [
+        0,
+        86400,
+        604800,
+        7776000
+      ],
+      "description": "set_disappearing: 0 (off), 86400 (24h), 604800 (7d), 7776000 (90d)"
+    },
     "count": {
       "type": "integer",
       "minimum": 1,
       "maximum": 500,
-      "description": "request_history: older messages to request (default 50); asynchronous and best effort"
+      "description": "request_history: how many older messages to request (default 50)"
     }
   },
   "allOf": [
@@ -658,6 +948,35 @@ const chatSchema = `{
       "if": {
         "properties": {
           "action": {
+            "const": "pin"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "chat_jid"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "set_disappearing"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "chat_jid",
+          "timer_seconds"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
             "const": "request_history"
           }
         }
@@ -673,30 +992,267 @@ const chatSchema = `{
 
 const groupSchema = `{
   "type": "object",
-  "required": ["action"],
+  "required": [
+    "action"
+  ],
   "properties": {
-    "action": {"type": "string", "enum": ["create","join_with_link","leave","info","participants","add_participants","remove_participants","promote","demote","invite_link","set_name","set_topic","set_settings","join_requests","manage_join_requests"], "description": "Group operation"},
-    "device_id": {"type": "string", "description": "Act as this device instead of the connection default"},
-    "group_id": {"type": "string", "description": "Group JID or numeric ID (all actions except create/join_with_link)"},
-    "title": {"type": "string", "description": "create: group subject"},
-    "participants": {"type": "array", "items": {"type": "string"}, "description": "create (optional) / add_participants / remove_participants / promote / demote / manage_join_requests: phone numbers without suffix"},
-    "invite_link": {"type": "string", "description": "join_with_link: WhatsApp invite link"},
-    "reset": {"type": "boolean", "description": "invite_link: revoke and regenerate the link (default false)"},
-    "name": {"type": "string", "maxLength": 25, "description": "set_name: new group name (max 25 characters)"},
-    "topic": {"type": "string", "description": "set_topic: new topic/description"},
-    "announce": {"type": "boolean", "description": "set_settings: true = only admins can send"},
-    "locked": {"type": "boolean", "description": "set_settings: true = only admins can edit group info"},
-    "request_action": {"type": "string", "enum": ["approve","reject"], "description": "manage_join_requests: what to do with the listed requesters"}
+    "action": {
+      "type": "string",
+      "enum": [
+        "create",
+        "join_with_link",
+        "info_from_link",
+        "leave",
+        "info",
+        "participants",
+        "add_participants",
+        "remove_participants",
+        "promote",
+        "demote",
+        "invite_link",
+        "set_name",
+        "set_topic",
+        "set_settings",
+        "set_photo",
+        "remove_photo",
+        "join_requests",
+        "manage_join_requests"
+      ],
+      "description": "Group operation. info_from_link previews a group from its invite link without joining"
+    },
+    "device_id": {
+      "type": "string",
+      "description": "Act as this device instead of the connection default"
+    },
+    "group_id": {
+      "type": "string",
+      "description": "Group JID or numeric ID (all actions except create/join_with_link/info_from_link)"
+    },
+    "title": {
+      "type": "string",
+      "description": "create: group subject"
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "description": "create / add_participants / remove_participants / promote / demote / manage_join_requests: phone numbers without suffix"
+    },
+    "invite_link": {
+      "type": "string",
+      "minLength": 1,
+      "description": "join_with_link/info_from_link: WhatsApp invite link or code"
+    },
+    "reset": {
+      "type": "boolean",
+      "description": "invite_link: revoke and regenerate the link (default false)"
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 25,
+      "description": "set_name: new group name (max 25 characters)"
+    },
+    "topic": {
+      "type": "string",
+      "description": "set_topic: new topic/description; empty string removes it"
+    },
+    "announce": {
+      "type": "boolean",
+      "description": "set_settings: true = only admins can send"
+    },
+    "locked": {
+      "type": "boolean",
+      "description": "set_settings: true = only admins can edit group info"
+    },
+    "photo_url": {
+      "type": "string",
+      "minLength": 1,
+      "description": "set_photo: URL of a JPEG, PNG or WebP image ending in .jpg/.jpeg/.png/.webp (fetched server-side); cropped to a square and resized"
+    },
+    "request_action": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "reject"
+      ],
+      "description": "manage_join_requests: what to do with the listed requesters"
+    }
   },
   "allOf": [
-    {"if": {"properties": {"action": {"const": "create"}}},         "then": {"required": ["title"]}},
-    {"if": {"properties": {"action": {"const": "join_with_link"}}}, "then": {"required": ["invite_link"]}},
-    {"if": {"properties": {"action": {"enum": ["leave","info","participants","invite_link","join_requests"]}}}, "then": {"required": ["group_id"]}},
-    {"if": {"properties": {"action": {"enum": ["add_participants","remove_participants","promote","demote"]}}}, "then": {"required": ["group_id", "participants"]}},
-    {"if": {"properties": {"action": {"const": "set_name"}}},  "then": {"required": ["group_id", "name"]}},
-    {"if": {"properties": {"action": {"const": "set_topic"}}}, "then": {"required": ["group_id", "topic"]}},
-    {"if": {"properties": {"action": {"const": "set_settings"}}}, "then": {"required": ["group_id"], "anyOf": [{"required": ["announce"]}, {"required": ["locked"]}]}},
-    {"if": {"properties": {"action": {"const": "manage_join_requests"}}}, "then": {"required": ["group_id", "participants", "request_action"]}}
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "create"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "title",
+          "participants"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "join_with_link",
+              "info_from_link"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "invite_link"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "leave",
+              "info",
+              "participants",
+              "invite_link",
+              "join_requests",
+              "remove_photo"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "group_id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "enum": [
+              "add_participants",
+              "remove_participants",
+              "promote",
+              "demote"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "group_id",
+          "participants"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "set_name"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "group_id",
+          "name"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "set_topic"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "group_id",
+          "topic"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "set_settings"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "group_id"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "announce"
+            ]
+          },
+          {
+            "required": [
+              "locked"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "set_photo"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "group_id"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "photo_url"
+            ]
+          },
+          {
+            "required": [
+              "media_id"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "action": {
+            "const": "manage_join_requests"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "group_id",
+          "participants",
+          "request_action"
+        ]
+      }
+    }
   ]
 }`
 
@@ -737,5 +1293,22 @@ const newsletterSchema = `{
     {"if": {"properties": {"action": {"const": "info"}}}, "then": {"oneOf": [{"required": ["newsletter_id"]}, {"required": ["invite"]}]}},
     {"if": {"properties": {"action": {"const": "message_updates"}}}, "then": {"required": ["after"]}},
     {"if": {"properties": {"action": {"const": "directory"}}}, "then": {"anyOf": [{"required": ["search_text"], "properties": {"search_text": {"minLength": 1}}}, {"required": ["country_codes"], "properties": {"country_codes": {"minItems": 1}}}]}}
+  ]
+}`
+
+const userSchema = `{
+  "type": "object",
+  "required": ["action"],
+  "properties": {
+    "action": {"type": "string", "enum": ["info","check","business_profile","avatar","subscribe_presence","set_push_name","my_privacy","my_groups","my_newsletters","my_contacts_detailed"], "description": "check looks up a phone number. subscribe_presence receives this user's online/offline events while this account is available. Set WHATSAPP_PRESENCE_ON_CONNECT=available or call whatsapp_send with type=presence and presence=available at runtime. set_push_name changes this account's display name. my_* reads this account's own data."},
+    "device_id": {"type": "string", "description": "Act as this device instead of the connection default"},
+    "phone": {"type": "string", "description": "User phone number or JID. check accepts an international number of up to 15 digits or its @s.whatsapp.net JID. avatar also accepts a group JID."},
+    "is_preview": {"type": "boolean", "description": "avatar: return the low-resolution preview (default false)"},
+    "is_community": {"type": "boolean", "description": "avatar: phone is a community group JID (default false)"},
+    "push_name": {"type": "string", "minLength": 1, "description": "set_push_name: new display name for this account"}
+  },
+  "allOf": [
+    {"if": {"properties": {"action": {"enum": ["info","check","business_profile","avatar","subscribe_presence"]}}}, "then": {"required": ["phone"]}},
+    {"if": {"properties": {"action": {"const": "set_push_name"}}}, "then": {"required": ["push_name"]}}
   ]
 }`

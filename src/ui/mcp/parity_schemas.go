@@ -53,7 +53,15 @@ func mediaSourceSchema(urlField string) map[string]any {
 func paritySendSchema() json.RawMessage {
 	s := schemaObject(sendSchema)
 	p := schemaProperties(s)
-	old := append([]any{}, p["type"].(map[string]any)["enum"].([]any)...)
+	old := make([]any, 0, 16)
+	for _, value := range p["type"].(map[string]any)["enum"].([]any) {
+		// A one-way presence update has no recipient, so it must not inherit the
+		// phone requirement the other send types carry. chat_presence keeps its
+		// own explicit phone requirement below.
+		if value != "presence" {
+			old = append(old, value)
+		}
+	}
 	s["required"] = []string{"type"}
 	schemaEnum(s, "type", "status", "presence", "chat_presence")
 	schemaCondition(s, map[string]any{"properties": map[string]any{"type": map[string]any{"enum": old}}}, map[string]any{"required": []string{"phone"}})

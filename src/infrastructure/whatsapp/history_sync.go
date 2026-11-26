@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -131,6 +132,11 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 		// Device-scoped: another device's stored name for this chat (for
 		// example a contact name only that account saved) is not this one's.
 		chatName := chatStorageRepo.GetChatNameWithPushNameByDevice(deviceID, jid, chatJID, "", displayName)
+		if jid.Server == types.GroupServer && (chatName == "Group "+jid.User || chatName == chatJID || chatName == jid.User) {
+			if candidate := strings.TrimSpace(displayName); candidate != "" && candidate != chatJID && candidate != jid.User {
+				chatName = candidate
+			}
+		}
 
 		// Process messages in the conversation
 		messages := conv.GetMessages()
@@ -310,7 +316,15 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 					log.Warnf("Failed to load existing chat %s for on-demand merge, keeping stored metadata: %v", chatJID, err)
 					storeChat = false
 				} else if existing != nil {
+					// A stale on-demand or full chunk must not move activity time
+					// backward, and a zero timer here means "not reported".
+					if existing.LastMessageTime.After(chat.LastMessageTime) {
+						chat.LastMessageTime = existing.LastMessageTime
+					}
 					chat.Archived = existing.Archived
+					if chat.EphemeralExpiration == 0 {
+						chat.EphemeralExpiration = existing.EphemeralExpiration
+					}
 				}
 			} else if conv.EphemeralExpiration != nil {
 				// A conversation that omits the field has not reported the timer.
@@ -319,7 +333,7 @@ func processConversationMessages(ctx context.Context, data *waHistorySync.Histor
 
 			// Store or update the chat
 			if storeChat {
-				if err := chatStorageRepo.StoreChat(chat); err != nil {
+				if err := StoreChatWithGroupSubject(ctx, chatStorageRepo, chat); err != nil {
 					log.Warnf("Failed to store chat %s: %v", chatJID, err)
 					continue
 				}

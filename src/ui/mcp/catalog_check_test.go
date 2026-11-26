@@ -45,8 +45,8 @@ func TestHandlerArgumentKeysAreInPublishedSchema(t *testing.T) {
 		tools = append(tools, tool)
 	}
 	sort.Strings(tools)
-	if len(tools) != 11 {
-		t.Fatalf("expected argument reads for 11 tools, found %d: %s", len(tools), strings.Join(tools, ", "))
+	if len(tools) != 12 {
+		t.Fatalf("expected argument reads for 12 tools, found %d: %s", len(tools), strings.Join(tools, ", "))
 	}
 	for _, tool := range tools {
 		keys := reads[tool]

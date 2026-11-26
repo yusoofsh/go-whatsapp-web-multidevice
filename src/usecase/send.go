@@ -226,6 +226,12 @@ func getVideoMetadata(videoPath string) videoMetadata {
 type serviceSend struct {
 	appService      app.IAppUsecase
 	chatStorageRepo domainChatStorage.IChatStorageRepository
+
+	// Forward re-upload seams; nil uses the real whatsmeow/CDN implementations.
+	extractMediaFn         extractMediaFunc
+	requestMediaReuploadFn requestMediaReuploadFunc
+	fetchReuploadedMediaFn fetchReuploadedMediaFunc
+	uploadMediaFn          func(ctx context.Context, client *whatsmeow.Client, mediaType whatsmeow.MediaType, media []byte, recipient types.JID) (whatsmeow.UploadResponse, error)
 }
 
 func NewSendService(appService app.IAppUsecase, chatStorageRepo domainChatStorage.IChatStorageRepository) domainSend.ISendUsecase {
@@ -319,7 +325,11 @@ func normalizeStoredSender(ctx context.Context, sender string) string {
 	return whatsapp.NormalizeJIDFromLID(ctx, parsed, whatsapp.ClientFromContext(ctx)).ToNonAD().String()
 }
 
-func (service serviceSend) mergeReplyContext(ctx context.Context, contextInfo *waE2E.ContextInfo, replyMessageID *string) *waE2E.ContextInfo {
+// mergeReplyContext quotes a stored message. When that message lives in a group
+// and the reply goes to another chat ("reply privately" in WhatsApp), the quote
+// also carries the group as RemoteJID, so the recipient's client labels it with
+// the group and tapping it opens the original message there.
+func (service serviceSend) mergeReplyContext(ctx context.Context, contextInfo *waE2E.ContextInfo, replyMessageID *string, recipient types.JID) *waE2E.ContextInfo {
 	if replyMessageID == nil || *replyMessageID == "" {
 		return contextInfo
 	}
@@ -336,6 +346,10 @@ func (service serviceSend) mergeReplyContext(ctx context.Context, contextInfo *w
 		return contextInfo
 	}
 
+	if !whatsapp.ReplyChatAllowed(ctx, recipient.String(), message.ChatJID) {
+		return contextInfo
+	}
+
 	if contextInfo == nil {
 		contextInfo = &waE2E.ContextInfo{}
 	}
@@ -344,7 +358,25 @@ func (service serviceSend) mergeReplyContext(ctx context.Context, contextInfo *w
 	contextInfo.QuotedMessage = &waE2E.Message{
 		Conversation: proto.String(message.Content),
 	}
+	if remote := privateReplyRemoteJID(message.ChatJID, recipient); remote != "" {
+		contextInfo.RemoteJID = proto.String(remote)
+	}
 	return contextInfo
+}
+
+// privateReplyRemoteJID returns the group JID of a quoted group message when
+// the reply is sent to a different chat. Replies inside the same chat, and
+// quotes from 1:1 chats (stored under either the phone or the LID JID), keep
+// RemoteJID empty.
+func privateReplyRemoteJID(quotedChatJID string, recipient types.JID) string {
+	quoted, err := types.ParseJID(quotedChatJID)
+	if err != nil || quoted.Server != types.GroupServer {
+		return ""
+	}
+	if quoted.ToNonAD() == recipient.ToNonAD() {
+		return ""
+	}
+	return quoted.ToNonAD().String()
 }
 
 // withAllowReshare marks a status post as reshareable. Without
@@ -402,17 +434,17 @@ func (service serviceSend) SendText(ctx context.Context, request domainSend.Mess
 	}
 
 	// Set disappearing message duration if provided
-	if request.BaseRequest.Duration != nil && *request.BaseRequest.Duration > 0 {
+	if request.BaseRequest.Duration != nil { // an explicit 0 turns expiry off
 		msg.ExtendedTextMessage.ContextInfo.Expiration = proto.Uint32(uint32(*request.BaseRequest.Duration))
 	} else {
-		msg.ExtendedTextMessage.ContextInfo.Expiration = proto.Uint32(service.getDefaultEphemeralExpiration(ctx, request.BaseRequest.Phone))
+		msg.ExtendedTextMessage.ContextInfo.Expiration = proto.Uint32(service.getDefaultEphemeralExpiration(ctx, chatKeys(request.BaseRequest.Phone, dataWaRecipient)...))
 	}
 
 	if mentionedJIDs := service.resolveMentions(ctx, request.Message, request.Mentions, dataWaRecipient); len(mentionedJIDs) > 0 {
 		msg.ExtendedTextMessage.ContextInfo.MentionedJID = mentionedJIDs
 	}
 
-	msg.ExtendedTextMessage.ContextInfo = service.mergeReplyContext(ctx, msg.ExtendedTextMessage.ContextInfo, request.ReplyMessageID)
+	msg.ExtendedTextMessage.ContextInfo = service.mergeReplyContext(ctx, msg.ExtendedTextMessage.ContextInfo, request.ReplyMessageID, dataWaRecipient)
 	msg.ExtendedTextMessage.ContextInfo = withAllowReshare(msg.ExtendedTextMessage.ContextInfo, request.AllowReshare)
 
 	ts, err := service.wrapSendMessage(ctx, client, dataWaRecipient, msg, request.Message)
@@ -420,6 +452,7 @@ func (service serviceSend) SendText(ctx context.Context, request domainSend.Mess
 		return response, err
 	}
 
+	response.RecipientJID = dataWaRecipient.String()
 	response.MessageID = ts.ID
 	response.Status = fmt.Sprintf("Message sent to %s (server timestamp: %s)", request.Phone, ts.Timestamp.String())
 	return response, nil
@@ -599,7 +632,7 @@ func (service serviceSend) SendImage(ctx context.Context, request domainSend.Ima
 		}
 		msg.ImageMessage.ContextInfo.MentionedJID = mentionedJIDs
 	}
-	msg.ImageMessage.ContextInfo = service.mergeReplyContext(ctx, msg.ImageMessage.ContextInfo, request.ReplyMessageID)
+	msg.ImageMessage.ContextInfo = service.mergeReplyContext(ctx, msg.ImageMessage.ContextInfo, request.ReplyMessageID, dataWaRecipient)
 	msg.ImageMessage.ContextInfo = withAllowReshare(msg.ImageMessage.ContextInfo, request.AllowReshare)
 
 	caption := "🖼️ Image"
@@ -611,6 +644,7 @@ func (service serviceSend) SendImage(ctx context.Context, request domainSend.Ima
 		return response, err
 	}
 
+	response.RecipientJID = dataWaRecipient.String()
 	response.MessageID = ts.ID
 	response.Status = fmt.Sprintf("Message sent to %s (server timestamp: %s)", request.BaseRequest.Phone, ts.Timestamp.String())
 	return response, nil
@@ -692,7 +726,7 @@ func (service serviceSend) SendFile(ctx context.Context, request domainSend.File
 		}
 		msg.DocumentMessage.ContextInfo.MentionedJID = mentionedJIDs
 	}
-	msg.DocumentMessage.ContextInfo = service.mergeReplyContext(ctx, msg.DocumentMessage.ContextInfo, request.ReplyMessageID)
+	msg.DocumentMessage.ContextInfo = service.mergeReplyContext(ctx, msg.DocumentMessage.ContextInfo, request.ReplyMessageID, dataWaRecipient)
 
 	caption := "📄 Document"
 	if fileName != "" {
@@ -706,6 +740,7 @@ func (service serviceSend) SendFile(ctx context.Context, request domainSend.File
 		return response, err
 	}
 
+	response.RecipientJID = dataWaRecipient.String()
 	response.MessageID = ts.ID
 	response.Status = fmt.Sprintf("Document sent to %s (server timestamp: %s)", request.BaseRequest.Phone, ts.Timestamp.String())
 	return response, nil
@@ -1176,7 +1211,7 @@ func (service serviceSend) SendVideo(ctx context.Context, request domainSend.Vid
 		}
 		msg.VideoMessage.ContextInfo.MentionedJID = mentionedJIDs
 	}
-	msg.VideoMessage.ContextInfo = service.mergeReplyContext(ctx, msg.VideoMessage.ContextInfo, request.ReplyMessageID)
+	msg.VideoMessage.ContextInfo = service.mergeReplyContext(ctx, msg.VideoMessage.ContextInfo, request.ReplyMessageID, dataWaRecipient)
 	msg.VideoMessage.ContextInfo = withAllowReshare(msg.VideoMessage.ContextInfo, request.AllowReshare)
 
 	caption := "🎥 Video"
@@ -1188,6 +1223,7 @@ func (service serviceSend) SendVideo(ctx context.Context, request domainSend.Vid
 		return response, err
 	}
 
+	response.RecipientJID = dataWaRecipient.String()
 	response.MessageID = ts.ID
 	response.Status = fmt.Sprintf("Video sent to %s (server timestamp: %s)", request.BaseRequest.Phone, ts.Timestamp.String())
 	return response, nil
@@ -1595,7 +1631,7 @@ func (service serviceSend) SendAudio(ctx context.Context, request domainSend.Aud
 		}
 		msg.AudioMessage.ContextInfo.Expiration = proto.Uint32(uint32(*request.BaseRequest.Duration))
 	}
-	msg.AudioMessage.ContextInfo = service.mergeReplyContext(ctx, msg.AudioMessage.ContextInfo, request.ReplyMessageID)
+	msg.AudioMessage.ContextInfo = service.mergeReplyContext(ctx, msg.AudioMessage.ContextInfo, request.ReplyMessageID, dataWaRecipient)
 
 	content := "🎵 Audio"
 
@@ -1604,6 +1640,7 @@ func (service serviceSend) SendAudio(ctx context.Context, request domainSend.Aud
 		return response, err
 	}
 
+	response.RecipientJID = dataWaRecipient.String()
 	response.MessageID = ts.ID
 	response.Status = fmt.Sprintf("Send audio success %s (server timestamp: %s)", request.BaseRequest.Phone, ts.Timestamp.String())
 	return response, nil
@@ -1955,7 +1992,7 @@ func (service serviceSend) SendSticker(ctx context.Context, request domainSend.S
 			msg.StickerMessage.ContextInfo.Expiration = proto.Uint32(uint32(*request.BaseRequest.Duration))
 		}
 
-		msg.StickerMessage.ContextInfo = service.mergeReplyContext(ctx, msg.StickerMessage.ContextInfo, request.ReplyMessageID)
+		msg.StickerMessage.ContextInfo = service.mergeReplyContext(ctx, msg.StickerMessage.ContextInfo, request.ReplyMessageID, dataWaRecipient)
 
 		content := "🎨 Animated Sticker"
 
@@ -2116,7 +2153,7 @@ func (service serviceSend) SendSticker(ctx context.Context, request domainSend.S
 		msg.StickerMessage.ContextInfo.Expiration = proto.Uint32(uint32(*request.BaseRequest.Duration))
 	}
 
-	msg.StickerMessage.ContextInfo = service.mergeReplyContext(ctx, msg.StickerMessage.ContextInfo, request.ReplyMessageID)
+	msg.StickerMessage.ContextInfo = service.mergeReplyContext(ctx, msg.StickerMessage.ContextInfo, request.ReplyMessageID, dataWaRecipient)
 
 	content := "🎨 Sticker"
 
@@ -2131,7 +2168,12 @@ func (service serviceSend) SendSticker(ctx context.Context, request domainSend.S
 	return response, nil
 }
 
+// uploadMedia uploads media for a send to recipient, using the newsletter
+// upload for newsletter recipients.
 func (service serviceSend) uploadMedia(ctx context.Context, client *whatsmeow.Client, mediaType whatsmeow.MediaType, media []byte, recipient types.JID) (uploaded whatsmeow.UploadResponse, err error) {
+	if service.uploadMediaFn != nil {
+		return service.uploadMediaFn(ctx, client, mediaType, media, recipient)
+	}
 	return uploadMediaForRecipient(ctx, client, mediaType, media, recipient)
 }
 
@@ -2183,9 +2225,9 @@ func getWebPInfo(ctx context.Context, filePath string) (isAnimated bool, width i
 // getDefaultEphemeralExpiration returns the disappearing-message timer this
 // device has stored for the chat. Another device's timer for the same chat is
 // not this device's setting, so the lookup is device-scoped.
-func (service serviceSend) getDefaultEphemeralExpiration(ctx context.Context, jid string) (expiration uint32) {
+func (service serviceSend) getDefaultEphemeralExpiration(ctx context.Context, jids ...string) (expiration uint32) {
 	expiration = 0
-	if jid == "" || service.chatStorageRepo == nil {
+	if service.chatStorageRepo == nil {
 		return expiration
 	}
 	deviceID := storageDeviceID(ctx)
@@ -2193,12 +2235,7 @@ func (service serviceSend) getDefaultEphemeralExpiration(ctx context.Context, ji
 		return expiration
 	}
 
-	chat, err := service.chatStorageRepo.GetChatByDevice(deviceID, jid)
-	if err != nil {
-		return expiration
-	}
-
-	if chat != nil && chat.EphemeralExpiration != 0 {
+	if chat := storedChat(service.chatStorageRepo, deviceID, jids...); chat != nil && chat.EphemeralExpiration != 0 {
 		expiration = chat.EphemeralExpiration
 	}
 

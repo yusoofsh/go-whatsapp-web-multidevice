@@ -52,6 +52,16 @@ type Message struct {
 	UpdatedAt        time.Time  `db:"updated_at"`
 }
 
+// MessageMedia is the location and integrity metadata of a stored message's
+// media file. It changes when the phone re-uploads expired media.
+type MessageMedia struct {
+	URL           string
+	DirectPath    string
+	FileSHA256    []byte
+	FileEncSHA256 []byte
+	FileLength    uint64
+}
+
 // MessageEdit represents a single edit applied to an existing WhatsApp message.
 type MessageEdit struct {
 	OriginalMessageID string    `db:"original_message_id"`
@@ -209,6 +219,16 @@ type MessageFilter struct {
 	EndTime   *time.Time
 	MediaOnly bool
 	IsFromMe  *bool
+}
+
+// CallRecordFilter represents query filters for stored call records
+// (synthetic messages with media_type "call").
+type CallRecordFilter struct {
+	DeviceID string
+	// ChatJIDs matches records stored under any of these chat JIDs.
+	ChatJIDs []string
+	Limit    int
+	Offset   int
 }
 
 // ScheduledSendFilter represents query filters for scheduled sends
