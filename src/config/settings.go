@@ -38,6 +38,11 @@ var (
 	AppHistoryFullSyncDays   uint32
 	AppHistoryFullSyncSizeMB uint32
 
+	// McpOAuthConsentAuth replaces APP_BASIC_AUTH on the OAuth consent form when
+	// the web app authenticates at the edge instead. Empty falls back to the
+	// APP_BASIC_AUTH accounts.
+	McpOAuthConsentAuth []string
+
 	// Web UI (gowa-ui) runtime download settings. The dashboard is a separate
 	// project released as a single HTML file; gowa fetches the latest release
 	// asset and serves it at "/".

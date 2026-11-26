@@ -165,6 +165,9 @@ func initEnvConfig() {
 		credential := strings.Split(envBasicAuth, ",")
 		config.AppBasicAuthCredential = credential
 	}
+	if envConsentAuth := viper.GetString("mcp_oauth_consent_auth"); envConsentAuth != "" {
+		config.McpOAuthConsentAuth = strings.Split(envConsentAuth, ",")
+	}
 	if envBasePath := viper.GetString("app_base_path"); envBasePath != "" {
 		config.AppBasePath = envBasePath
 	}
