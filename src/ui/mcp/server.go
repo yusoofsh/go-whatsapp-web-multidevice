@@ -55,5 +55,6 @@ func NewServer(deps Deps, resolver deviceResolver, options ...server.ServerOptio
 		registerDataTools(s, deps.Data, resolver)
 	}
 	registerParityTools(s, deps, resolver)
+	InitMcpUser(deps.User, resolver).AddUserTools(s)
 	return s
 }

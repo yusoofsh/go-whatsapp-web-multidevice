@@ -180,6 +180,35 @@
             "if": {
               "properties": {
                 "action": {
+                  "const": "pin"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "chat_jid"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "set_disappearing"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "chat_jid",
+                "timer_seconds"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
                   "const": "request_history"
                 }
               }
@@ -245,12 +274,14 @@
         ],
         "properties": {
           "action": {
-            "description": "Chat/contact query or archive toggle",
+            "description": "Chat/contact query or chat setting. request_history asks the phone for older messages, anchored at the oldest stored message; they arrive asynchronously via history sync",
             "enum": [
               "list_chats",
               "list_contacts",
               "get_messages",
               "archive",
+              "pin",
+              "set_disappearing",
               "request_history",
               "pin",
               "unpin",
@@ -263,11 +294,11 @@
             "type": "boolean"
           },
           "chat_jid": {
-            "description": "get_messages/archive: chat JID (e.g. 628@s.whatsapp.net or group@g.us)",
+            "description": "get_messages/archive/pin/set_disappearing/request_history: chat JID (e.g. 628@s.whatsapp.net or group@g.us)",
             "type": "string"
           },
           "count": {
-            "description": "request_history: older messages to request (default 50); asynchronous and best effort",
+            "description": "request_history: how many older messages to request (default 50)",
             "maximum": 500,
             "minimum": 1,
             "type": "integer"
@@ -379,7 +410,8 @@
             },
             "then": {
               "required": [
-                "title"
+                "title",
+                "participants"
               ]
             }
           },
@@ -387,7 +419,10 @@
             "if": {
               "properties": {
                 "action": {
-                  "const": "join_with_link"
+                  "enum": [
+                    "join_with_link",
+                    "info_from_link"
+                  ]
                 }
               }
             },
@@ -406,7 +441,8 @@
                     "info",
                     "participants",
                     "invite_link",
-                    "join_requests"
+                    "join_requests",
+                    "remove_photo"
                   ]
                 }
               }
@@ -485,6 +521,32 @@
                 {
                   "required": [
                     "locked"
+                  ]
+                }
+              ],
+              "required": [
+                "group_id"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "set_photo"
+                }
+              }
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "required": [
+                    "photo_url"
+                  ]
+                },
+                {
+                  "required": [
+                    "media_id"
                   ]
                 }
               ],
@@ -581,10 +643,11 @@
         ],
         "properties": {
           "action": {
-            "description": "Group operation",
+            "description": "Group operation. info_from_link previews a group from its invite link without joining",
             "enum": [
               "create",
               "join_with_link",
+              "info_from_link",
               "leave",
               "info",
               "participants",
@@ -596,6 +659,8 @@
               "set_name",
               "set_topic",
               "set_settings",
+              "set_photo",
+              "remove_photo",
               "join_requests",
               "manage_join_requests",
               "get_photo",
@@ -614,14 +679,15 @@
             "type": "string"
           },
           "group_id": {
-            "description": "Group JID or numeric ID (all actions except create/join_with_link)",
+            "description": "Group JID or numeric ID (all actions except create/join_with_link/info_from_link)",
             "type": "string"
           },
           "inline": {
             "type": "boolean"
           },
           "invite_link": {
-            "description": "join_with_link: WhatsApp invite link",
+            "description": "join_with_link/info_from_link: WhatsApp invite link or code",
+            "minLength": 1,
             "type": "string"
           },
           "limit": {
@@ -650,11 +716,18 @@
             "type": "integer"
           },
           "participants": {
-            "description": "create (optional) / add_participants / remove_participants / promote / demote / manage_join_requests: phone numbers without suffix",
+            "description": "create / add_participants / remove_participants / promote / demote / manage_join_requests: phone numbers without suffix",
             "items": {
+              "minLength": 1,
               "type": "string"
             },
+            "minItems": 1,
             "type": "array"
+          },
+          "photo_url": {
+            "description": "set_photo: URL of a JPEG, PNG or WebP image ending in .jpg/.jpeg/.png/.webp (fetched server-side); cropped to a square and resized",
+            "minLength": 1,
+            "type": "string"
           },
           "request_action": {
             "description": "manage_join_requests: what to do with the listed requesters",
@@ -673,7 +746,7 @@
             "type": "string"
           },
           "topic": {
-            "description": "set_topic: new topic/description",
+            "description": "set_topic: new topic/description; empty string removes it",
             "type": "string"
           }
         },
@@ -982,6 +1055,14 @@
           },
           "link": {
             "description": "action=edit: optional URL; the edit is sent with a rich link preview for it, like send link (appended to message if absent)",
+            "type": "string"
+          },
+          "media_type": {
+            "description": "action=edit: set when message_id is an image or document; the edit replaces its caption. Cannot be combined with link",
+            "enum": [
+              "image",
+              "document"
+            ],
             "type": "string"
           },
           "message": {
@@ -1768,6 +1849,69 @@
             "if": {
               "properties": {
                 "type": {
+                  "const": "interactive"
+                }
+              }
+            },
+            "then": {
+              "oneOf": [
+                {
+                  "required": [
+                    "buttons"
+                  ]
+                },
+                {
+                  "required": [
+                    "cards"
+                  ]
+                }
+              ],
+              "required": [
+                "body"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "chat_presence"
+                }
+              }
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "required": [
+                    "action"
+                  ]
+                },
+                {
+                  "required": [
+                    "chat_presence"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "presence"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "presence"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
                   "enum": [
                     "text",
                     "image",
@@ -1779,7 +1923,37 @@
                     "contact",
                     "poll",
                     "link",
-                    "forward"
+                    "forward",
+                    "interactive",
+                    "chat_presence"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "phone"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "type": {
+                  "enum": [
+                    "text",
+                    "image",
+                    "video",
+                    "audio",
+                    "document",
+                    "sticker",
+                    "location",
+                    "contact",
+                    "poll",
+                    "link",
+                    "forward",
+                    "interactive",
+                    "chat_presence"
                   ]
                 }
               }
@@ -2001,6 +2175,14 @@
           }
         ],
         "properties": {
+          "action": {
+            "description": "type=chat_presence: start or stop the typing indicator (alias of chat_presence)",
+            "enum": [
+              "start",
+              "stop"
+            ],
+            "type": "string"
+          },
           "allow_reshare": {
             "description": "text/image/video: let viewers reshare the status; requires phone status@broadcast (default false)",
             "type": "boolean"
@@ -2009,9 +2191,97 @@
             "description": "type=audio: URL of the audio file (fetched server-side)",
             "type": "string"
           },
+          "body": {
+            "description": "type=interactive: message body text (max 4096 bytes)",
+            "type": "string"
+          },
+          "buttons": {
+            "description": "type=interactive: native-flow buttons; use this or cards, not both. params per name: quick_reply {display_text,id}, cta_url {display_text,url}, cta_copy {display_text,copy_code}, cta_call {display_text,phone_number}, single_select {title,sections:[{title,rows:[{id,title}]}]}, send_location {} (must be the only button)",
+            "items": {
+              "properties": {
+                "name": {
+                  "enum": [
+                    "quick_reply",
+                    "cta_url",
+                    "cta_copy",
+                    "cta_call",
+                    "single_select",
+                    "send_location"
+                  ],
+                  "type": "string"
+                },
+                "params": {
+                  "type": "object"
+                }
+              },
+              "required": [
+                "name",
+                "params"
+              ],
+              "type": "object"
+            },
+            "maxItems": 10,
+            "minItems": 1,
+            "type": "array"
+          },
           "caption": {
             "description": "image/video/document/link: caption text",
             "type": "string"
+          },
+          "cards": {
+            "description": "type=interactive: image carousel of 2-10 cards, each with 1-10 buttons shaped like top-level buttons (send_location is not allowed in cards); use this or buttons, not both",
+            "items": {
+              "properties": {
+                "body": {
+                  "type": "string"
+                },
+                "buttons": {
+                  "items": {
+                    "properties": {
+                      "name": {
+                        "enum": [
+                          "quick_reply",
+                          "cta_url",
+                          "cta_copy",
+                          "cta_call",
+                          "single_select"
+                        ],
+                        "type": "string"
+                      },
+                      "params": {
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "params"
+                    ],
+                    "type": "object"
+                  },
+                  "maxItems": 10,
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "footer": {
+                  "type": "string"
+                },
+                "image_base64": {
+                  "description": "raw base64 JPEG/PNG, no data-URL prefix",
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "body",
+                "buttons"
+              ],
+              "type": "object"
+            },
+            "maxItems": 10,
+            "minItems": 2,
+            "type": "array"
           },
           "chat_presence": {
             "enum": [
@@ -2043,7 +2313,7 @@
             "type": "string"
           },
           "duration": {
-            "description": "type=forward: disappearing duration seconds (0, 86400, 604800, 7776000)",
+            "description": "Disappearing timer seconds for the sent message (0, 86400, 604800, 7776000); all types except interactive, chat_presence and presence",
             "enum": [
               0,
               86400,
@@ -2058,6 +2328,10 @@
           },
           "file_url": {
             "description": "type=document: URL of the file; MIME type and filename derived server-side",
+            "type": "string"
+          },
+          "footer": {
+            "description": "type=interactive: optional footer text (max 256 bytes)",
             "type": "string"
           },
           "force_reupload": {
@@ -2077,7 +2351,7 @@
             "type": "string"
           },
           "is_forwarded": {
-            "description": "Mark the message as forwarded (default false)",
+            "description": "Mark the message as forwarded (default false); ignored for interactive",
             "type": "boolean"
           },
           "latitude": {
@@ -2132,7 +2406,7 @@
             "type": "array"
           },
           "phone": {
-            "description": "Destination phone number or group JID",
+            "description": "Destination phone number or group JID (required for every type except presence)",
             "type": "string"
           },
           "presence": {
@@ -2161,11 +2435,11 @@
             "type": "string"
           },
           "reply_message_id": {
-            "description": "type=text: message ID to reply to",
+            "description": "text/image/video/audio/document/sticker: message ID to reply to",
             "type": "string"
           },
           "scheduled_at": {
-            "description": "Schedule instead of sending now: RFC3339 time of the first send (must be in the future)",
+            "description": "Schedule instead of sending now: RFC3339 time of the first send (must be in the future); not supported for interactive, chat_presence or presence",
             "type": "string"
           },
           "status_type": {
@@ -2198,6 +2472,9 @@
               "poll",
               "link",
               "forward",
+              "interactive",
+              "chat_presence",
+              "presence",
               "status",
               "presence",
               "chat_presence"
@@ -2229,6 +2506,98 @@
         "type": "object"
       },
       "name": "whatsapp_send"
+    },
+    {
+      "annotations": {
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true,
+        "readOnlyHint": false,
+        "title": "User and Account"
+      },
+      "description": "Look up WhatsApp users and this account: info, check (is the number on WhatsApp), business_profile, avatar, subscribe_presence, set_push_name (change this account's display name), my_privacy, my_groups, my_newsletters, my_contacts_detailed.",
+      "inputSchema": {
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "enum": [
+                    "info",
+                    "check",
+                    "business_profile",
+                    "avatar",
+                    "subscribe_presence"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "phone"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "set_push_name"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "push_name"
+              ]
+            }
+          }
+        ],
+        "properties": {
+          "action": {
+            "description": "check looks up a phone number. subscribe_presence receives this user's online/offline events while this account is available. Set WHATSAPP_PRESENCE_ON_CONNECT=available or call whatsapp_send with type=presence and presence=available at runtime. set_push_name changes this account's display name. my_* reads this account's own data.",
+            "enum": [
+              "info",
+              "check",
+              "business_profile",
+              "avatar",
+              "subscribe_presence",
+              "set_push_name",
+              "my_privacy",
+              "my_groups",
+              "my_newsletters",
+              "my_contacts_detailed"
+            ],
+            "type": "string"
+          },
+          "device_id": {
+            "description": "Act as this device instead of the connection default",
+            "type": "string"
+          },
+          "is_community": {
+            "description": "avatar: phone is a community group JID (default false)",
+            "type": "boolean"
+          },
+          "is_preview": {
+            "description": "avatar: return the low-resolution preview (default false)",
+            "type": "boolean"
+          },
+          "phone": {
+            "description": "User phone number or JID. check accepts an international number of up to 15 digits or its @s.whatsapp.net JID. avatar also accepts a group JID.",
+            "type": "string"
+          },
+          "push_name": {
+            "description": "set_push_name: new display name for this account",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "type": "object"
+      },
+      "name": "whatsapp_user"
     }
   ]
 }

@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	AppVersion             = "v9.9.0"
+	AppVersion             = "v9.11.0"
 	AppPort                = "3000"
 	AppHost                = "0.0.0.0"
 	AppDebug               = false
@@ -27,6 +27,10 @@ var (
 	AppBasePath           = ""
 	AppTrustedProxies     []string // Trusted proxy IP ranges (e.g., "0.0.0.0/0" for all, or specific CIDRs)
 	AppCORSAllowedOrigins []string // CORS allowed origins; empty means "*" (any origin)
+	// AppTimezone is the IANA zone for chat, message and newsletter timestamps in
+	// REST and MCP responses. Storage and webhooks stay in UTC.
+	AppTimezone = "UTC"
+	AppLocation = time.UTC // AppTimezone, resolved at startup
 
 	// Sent to the phone only when a device pairs. A zero limit leaves the
 	// whatsmeow default in place.
@@ -186,10 +190,20 @@ var (
 	ChatwootForwardEdits   = true
 	ChatwootForwardDeletes = true
 
+	// ChatwootEvents is the event whitelist for Chatwoot forwarding. Empty means
+	// Chatwoot follows WhatsappWebhookEvents.
+	ChatwootEvents []string
+
 	// Chatwoot Evolution-compatible state propagation. Read sync updates
 	// Chatwoot last-seen from WhatsApp receipts and marks WhatsApp messages read
 	// after agent replies. Delete sync removes the linked Chatwoot/WhatsApp
 	// message when the opposite side reports deletion.
 	ChatwootMessageRead   = false
 	ChatwootMessageDelete = false
+
+	// ChatwootRevokeOnDelete is the Chatwoot-to-WhatsApp half of
+	// ChatwootMessageDelete alone: a message the agent deletes in Chatwoot is
+	// revoked on WhatsApp, and nothing deleted on WhatsApp is deleted in
+	// Chatwoot.
+	ChatwootRevokeOnDelete = false
 )

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
@@ -94,6 +95,20 @@ func (c *Client) resolveInboxIdentifier() (string, error) {
 	}
 	return "", fmt.Errorf("chatwoot inbox %d has no inbox_identifier", c.InboxID)
 }
+
+// apiTokenHeader carries the Chatwoot API access token. Chatwoot documents it
+// as "api_access_token". Rails exposes a request header to the application as
+// HTTP_<NAME> with hyphens turned into underscores, so "api-access-token"
+// reaches Chatwoot as the same HTTP_API_ACCESS_TOKEN and is equivalent.
+//
+// The hyphenated spelling is used because some reverse proxies discard header
+// names that contain an underscore. nginx does so by default:
+// "underscores_in_headers" defaults to "off", which marks such a header as
+// invalid, and "ignore_invalid_headers" defaults to "on", which drops it
+// (https://nginx.org/en/docs/http/ngx_http_core_module.html#underscores_in_headers).
+// Behind such a proxy every call would fail with a 401. Proxies that forward
+// headers unchanged (Caddy, for example) work with either spelling.
+const apiTokenHeader = "api-access-token"
 
 // HTTPStatusError is returned by every Client method that hits Chatwoot's
 // REST API when the response status is outside 2xx. It carries the HTTP
@@ -204,7 +219,9 @@ func init() {
 // NewClient builds the Chatwoot client from the global CHATWOOT_* env config.
 // It is used for the legacy/env "single config" mode (no per-device config rows).
 // The env client is operator-trusted and may legitimately point at an internal
-// Chatwoot (e.g. the same Docker network), so it is NOT SSRF-guarded.
+// Chatwoot (e.g. the same Docker network), so it is NOT SSRF-guarded or held to
+// the per-device allowlist. Its redirects still drop the API token when they
+// leave the configured origin.
 func NewClient() *Client {
 	return newChatwootClient(config.ChatwootURL, config.ChatwootAPIToken, config.ChatwootAccountID, config.ChatwootInboxID, false)
 }
@@ -253,6 +270,8 @@ func newChatwootClient(baseURL, apiToken string, accountID, inboxID int, ssrfGua
 	if ssrfGuard {
 		httpClient.Transport = cappedBodyTransport{ssrfGuardedTransport()}
 		httpClient.CheckRedirect = chatwootCheckRedirect
+	} else {
+		httpClient.CheckRedirect = chatwootTokenRedirect
 	}
 	return &Client{
 		BaseURL:    canonical,
@@ -338,15 +357,12 @@ func ssrfGuardedTransport() *http.Transport {
 
 // chatwootCheckRedirect applies the host allowlist to every redirect. An empty
 // allowlist keeps the default follow-redirects behavior (the connect-time
-// guard still blocks private addresses). A redirect to a different host or
-// scheme drops the Chatwoot API token, with or without an allowlist, so
-// credentials are not sent across origins.
+// guard still blocks private addresses). Like chatwootTokenRedirect, it drops
+// the Chatwoot API token on a redirect that leaves the original origin, with
+// or without an allowlist.
 func chatwootCheckRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= 10 {
-		return errors.New("chatwoot: stopped after 10 redirects")
-	}
-	if len(via) > 0 && (!strings.EqualFold(via[0].URL.Hostname(), req.URL.Hostname()) || via[0].URL.Scheme != req.URL.Scheme) {
-		req.Header.Del("api_access_token")
+	if err := chatwootTokenRedirect(req, via); err != nil {
+		return err
 	}
 	if len(config.ChatwootAllowedHosts) == 0 {
 		return nil
@@ -355,6 +371,43 @@ func chatwootCheckRedirect(req *http.Request, via []*http.Request) error {
 		return fmt.Errorf("chatwoot: redirect host %q is not in the allowed hosts list", req.URL.Hostname())
 	}
 	return nil
+}
+
+// chatwootTokenRedirect is the redirect policy every Chatwoot client uses. It
+// caps the chain at 10 hops and removes the API token when the redirect target
+// is not the same origin (scheme, host and effective port) as the original
+// request. Go's client copies custom headers such as api-access-token to every
+// redirected request, so without this a 302 would hand the token to whichever
+// origin it names.
+func chatwootTokenRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 10 {
+		return errors.New("chatwoot: stopped after 10 redirects")
+	}
+	if len(via) > 0 && !sameChatwootOrigin(via[0].URL, req.URL) {
+		req.Header.Del(apiTokenHeader)
+	}
+	return nil
+}
+
+// sameChatwootOrigin compares scheme, host name and effective port, so
+// https://host and https://host:443 match while https://host:8443 does not.
+func sameChatwootOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		effectivePort(a) == effectivePort(b)
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	}
+	return ""
 }
 
 func readChatwootErrorBody(r io.Reader) string {
@@ -389,7 +442,7 @@ func (c *Client) FindContactByIdentifier(identifier string, isGroup bool) (*Cont
 	q := req.URL.Query()
 	q.Add("q", searchTerm)
 	req.URL.RawQuery = q.Encode()
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -462,7 +515,7 @@ func (c *Client) CreateContact(name, identifier string, isGroup bool) (*Contact,
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -510,6 +563,11 @@ func (c *Client) FindOrCreateContact(name, identifier string, isGroup bool) (*Co
 	if err != nil {
 		return nil, err
 	}
+	return c.ReuseOrCreateContact(name, identifier, isGroup, contact)
+}
+
+// ReuseOrCreateContact finishes contact resolution after an exact lookup.
+func (c *Client) ReuseOrCreateContact(name, identifier string, isGroup bool, contact *Contact) (*Contact, error) {
 	if contact != nil {
 		// Preserve manually edited 1:1 contact names; group subjects are
 		// expected to keep following WhatsApp-side name changes. Blank 1:1
@@ -562,7 +620,7 @@ func (c *Client) UpdateContactName(contactID int, name string) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -576,6 +634,37 @@ func (c *Client) UpdateContactName(contactID int, name string) error {
 	}
 
 	return nil
+}
+
+// ContactForConversation resolves the contact behind a delivered link. A
+// deleted conversation or one moved to another inbox no longer proves a route.
+func (c *Client) ContactForConversation(id int) (*Contact, error) {
+	endpoint := fmt.Sprintf("%s/api/v1/accounts/%d/conversations/%d", c.BaseURL, c.AccountID, id)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(apiTokenHeader, c.APIToken)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, &HTTPStatusError{StatusCode: resp.StatusCode, Op: "get linked conversation", Body: string(body)}
+	}
+	var conversation ConversationWebhook
+	if err := json.NewDecoder(resp.Body).Decode(&conversation); err != nil {
+		return nil, err
+	}
+	if conversation.ID != id || conversation.InboxID != c.InboxID || conversation.Meta.Sender.ID <= 0 {
+		return nil, nil
+	}
+	return &conversation.Meta.Sender, nil
 }
 
 type conversationListItem struct {
@@ -593,7 +682,7 @@ func (c *Client) listContactConversations(contactID int) ([]conversationListItem
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -654,7 +743,7 @@ func (c *Client) ToggleConversationStatus(conversationID int, status string) err
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -706,7 +795,7 @@ func (c *Client) CreateConversation(contactID int, sourceID string) (*Conversati
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -794,7 +883,7 @@ func (c *Client) ListInboxes() ([]Inbox, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -836,7 +925,7 @@ func (c *Client) CreateInbox(name, webhookURL string) (*Inbox, error) {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -877,7 +966,15 @@ type MessageOptions struct {
 	Private           bool
 }
 
-func (c *Client) CreateMessage(conversationID int, content string, messageType string, attachments []string, opt MessageOptions) (int, error) {
+// MessageAttachment pairs a local file to upload with the display filename
+// Chatwoot should show for it. FileName is optional; when empty, the local
+// Path's basename is used instead (see createMessageWithAttachments).
+type MessageAttachment struct {
+	Path     string
+	FileName string
+}
+
+func (c *Client) CreateMessage(conversationID int, content string, messageType string, attachments []MessageAttachment, opt MessageOptions) (int, error) {
 	endpoint := fmt.Sprintf("%s/api/v1/accounts/%d/conversations/%d/messages", c.BaseURL, c.AccountID, conversationID)
 
 	if len(attachments) > 0 {
@@ -902,7 +999,7 @@ func (c *Client) CreateMessage(conversationID int, content string, messageType s
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -932,7 +1029,7 @@ func (c *Client) DeleteMessage(conversationID, messageID int) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -967,7 +1064,7 @@ func (c *Client) UpdateLastSeen(conversationID int, contactInboxSourceID string)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -980,6 +1077,59 @@ func (c *Client) UpdateLastSeen(conversationID int, contactInboxSourceID string)
 		return &HTTPStatusError{StatusCode: resp.StatusCode, Op: "update last seen", Body: string(body)}
 	}
 	return nil
+}
+
+// contentDispositionEscaper mirrors the quoting mime/multipart.Writer applies
+// internally to filenames passed to CreateFormFile - since this file builds
+// the Content-Disposition header manually (to also set a custom Content-Type),
+// the same escaping has to be done by hand.
+var contentDispositionEscaper = strings.NewReplacer("\\", "\\\\", `"`, `\"`, "\r", "", "\n", "")
+
+// stripFilenameControls removes control characters that break multipart headers
+// and bidi controls that can disguise the displayed extension.
+func stripFilenameControls(fileName string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || unicode.Is(unicode.Bidi_Control, r) {
+			return -1
+		}
+		return r
+	}, fileName)
+}
+
+// mimeTypeForExt returns the MIME type for a file extension, falling back to a
+// built-in table for types absent from Go's built-in mime database. This is
+// necessary on minimal Alpine images where /etc/mime.types is not installed:
+// without it, mime.TypeByExtension returns "" for audio/video extensions such
+// as .ogg and .mp4, causing Chatwoot to classify the attachment as a generic
+// file (download link) instead of audio/video (inline player).
+func mimeTypeForExt(ext string) string {
+	if t := mime.TypeByExtension(ext); t != "" {
+		return t
+	}
+	return fallbackMimeType(ext)
+}
+
+// fallbackMimeType is the table mimeTypeForExt uses when the host has no MIME
+// database entry for ext.
+func fallbackMimeType(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".ogg", ".oga", ".opus":
+		return "audio/ogg"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".m4a":
+		return "audio/mp4"
+	case ".aac":
+		return "audio/aac"
+	case ".amr":
+		return "audio/amr"
+	case ".awb":
+		return "audio/amr-wb"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 // escapeChatwootPathSegment percent-encodes a value for use as a single path
@@ -1008,7 +1158,7 @@ func escapeChatwootPathSegment(s string) string {
 	return s
 }
 
-func (c *Client) createMessageWithAttachments(endpoint, content, messageType string, attachments []string, opt MessageOptions) (int, error) {
+func (c *Client) createMessageWithAttachments(endpoint, content, messageType string, attachments []MessageAttachment, opt MessageOptions) (int, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -1042,32 +1192,41 @@ func (c *Client) createMessageWithAttachments(endpoint, content, messageType str
 		}
 	}
 
-	for _, filePath := range attachments {
+	for _, att := range attachments {
+		filePath := att.Path
 		file, err := os.Open(filePath)
 		if err != nil {
 			return 0, fmt.Errorf("open attachment %s: %w", filePath, err)
 		}
 
-		fileName := filepath.Base(filePath)
-		ext := filepath.Ext(filePath)
-
-		mimeType := mime.TypeByExtension(ext)
-		if mimeType == "" {
-			switch ext {
-			case ".oga", ".ogg":
-				// The runtime image ships no /etc/mime.types, so
-				// mime.TypeByExtension never resolves these on its own.
-				// WhatsApp voice notes are saved as .ogg (Opus-in-Ogg);
-				// .oga is the alternate extension for the same container.
-				mimeType = "audio/ogg"
-			default:
-				mimeType = "application/octet-stream"
-			}
+		// Prefer the caller-supplied display name (e.g. the WhatsApp
+		// message's original filename) over the local path's basename,
+		// which is often a generated/temp name with no meaning to the
+		// Chatwoot operator viewing the attachment.
+		fileName := att.FileName
+		if fileName == "" {
+			fileName = filepath.Base(filePath)
+		} else {
+			fileName = filepath.Base(fileName)
+		}
+		fileName = stripFilenameControls(fileName)
+		// The Content-Type below follows the path's extension, so the name
+		// must end with it too: a recovered history-sync file is stored with
+		// the MIME-resolved extension when the sender's suffix is unusable
+		// ("report.pdf(1)"), while FileName is still the sender's raw name.
+		ext := stripFilenameControls(filepath.Ext(filePath))
+		if ext != "" && !strings.EqualFold(filepath.Ext(fileName), ext) {
+			fileName += ext
 		}
 
+		mimeType := mimeTypeForExt(ext)
+
 		// Custom form part with correct Content-Type for Chatwoot to render images inline.
+		// fileName may originate from a WhatsApp sender's own filename, so quotes/backslashes
+		// are escaped before landing in the header value - otherwise a crafted name could break
+		// out of the quoted filename parameter and corrupt the multipart request.
 		h := make(textproto.MIMEHeader)
-		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="attachments[]"; filename="%s"`, fileName))
+		h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="attachments[]"; filename="%s"`, contentDispositionEscaper.Replace(fileName)))
 		h.Set("Content-Type", mimeType)
 
 		part, err := writer.CreatePart(h)
@@ -1094,7 +1253,7 @@ func (c *Client) createMessageWithAttachments(endpoint, content, messageType str
 	}
 
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("api_access_token", c.APIToken)
+	req.Header.Set(apiTokenHeader, c.APIToken)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {

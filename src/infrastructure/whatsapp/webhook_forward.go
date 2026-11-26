@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -55,102 +56,6 @@ const mutexShardCount = 64
 // contactMutexShards provides sharded locks to prevent race conditions when creating Chatwoot contacts.
 // This approach prevents memory leaks that would occur with a sync.Map that grows indefinitely.
 var contactMutexShards [mutexShardCount]sync.Mutex
-
-// groupNameCacheKey identifies a cached group name. A subject belongs to the
-// account that read it: another account may not be in the group at all, so a
-// name is never shared between devices.
-type groupNameCacheKey struct {
-	deviceID string
-	groupJID string
-}
-
-// groupNameCacheEntry holds cached group name with expiration time
-type groupNameCacheEntry struct {
-	name       string
-	expiresAt  time.Time
-	fetchToken *int
-}
-
-var (
-	// groupNameCache provides TTL-based caching for group names to reduce WhatsApp API calls
-	groupNameCache    sync.Map
-	groupNameCacheTTL = 5 * time.Minute
-
-	// fetchGroupInfoFn asks WhatsApp for a group's info as the given client. It
-	// is a seam so tests can answer per device without a live connection.
-	fetchGroupInfoFn = func(ctx context.Context, client *whatsmeow.Client, jid types.JID) (*types.GroupInfo, error) {
-		return client.GetGroupInfo(ctx, jid)
-	}
-)
-
-// groupNameCacheDeviceID returns the identity a client's group names are cached
-// under: its own account JID, the same identity chat storage files rows under.
-// A client that is not logged in has none and never uses the cache.
-func groupNameCacheDeviceID(client *whatsmeow.Client) string {
-	if client == nil || client.Store == nil || client.Store.ID == nil {
-		return ""
-	}
-	return client.Store.ID.ToNonAD().String()
-}
-
-// getCachedGroupName retrieves the name one device cached for a group, if not
-// expired. Returns empty string and false if not cached or expired.
-func getCachedGroupName(deviceID, groupJID string) (string, bool) {
-	if deviceID == "" {
-		return "", false
-	}
-	key := groupNameCacheKey{deviceID: deviceID, groupJID: groupJID}
-	if entry, ok := groupNameCache.Load(key); ok {
-		cached := entry.(groupNameCacheEntry)
-		if time.Now().Before(cached.expiresAt) {
-			return cached.name, true
-		}
-		// Entry expired, delete it
-		groupNameCache.Delete(key)
-	}
-	return "", false
-}
-
-// setCachedGroupName stores a group name for one device with TTL.
-func setCachedGroupName(deviceID, groupJID, name string) {
-	if deviceID == "" {
-		return
-	}
-	groupNameCache.Store(groupNameCacheKey{deviceID: deviceID, groupJID: groupJID}, groupNameCacheEntry{
-		name:      name,
-		expiresAt: time.Now().Add(groupNameCacheTTL),
-	})
-}
-
-// invalidateCachedGroupName drops the name one device cached for a group, so
-// the next lookup by that device reads the current subject.
-func invalidateCachedGroupName(deviceID, groupJID string) {
-	if deviceID == "" {
-		return
-	}
-	groupNameCache.Delete(groupNameCacheKey{deviceID: deviceID, groupJID: groupJID})
-}
-
-// beginGroupNameCacheFetch reserves a unique cache value before the network
-// read. Deleting or replacing that value prevents an older fetch from caching
-// a name after a subject-change event invalidated it.
-func beginGroupNameCacheFetch(deviceID, groupJID string) func(string) {
-	if deviceID == "" {
-		return func(string) {}
-	}
-	key := groupNameCacheKey{deviceID: deviceID, groupJID: groupJID}
-	pending := groupNameCacheEntry{fetchToken: new(int)}
-	groupNameCache.Store(key, pending)
-	return func(name string) {
-		if name == "" {
-			groupNameCache.CompareAndDelete(key, pending)
-			return
-		}
-		groupNameCache.CompareAndSwap(key, pending, groupNameCacheEntry{
-			name: name, expiresAt: time.Now().Add(groupNameCacheTTL),
-		})
-	}
-}
 
 // getContactMutex returns a mutex for the given phone number to serialize contact operations.
 // Uses FNV-1a hash to distribute phones across shards for balanced lock contention.
@@ -227,6 +132,12 @@ func forwardPayloadWithWebhookConfig(ctx context.Context, payload map[string]any
 		addWebhookSessionID(payload)
 	}
 
+	// Start Chatwoot before the webhook legs: a down webhook spends ~15s in retry
+	// backoff, and Chatwoot must not wait for it.
+	if chatwootAllowed {
+		go forwardToChatwoot(ctx, payload, eventName)
+	}
+
 	// Run the two legs concurrently. They share the caller's deadline, and each URL
 	// can spend up to ~15s in retry backoff, so running the device leg first would
 	// let one slow endpoint consume the whole budget and leave the global leg a dead
@@ -263,10 +174,6 @@ func forwardPayloadWithWebhookConfig(ctx context.Context, payload map[string]any
 		default:
 			webhookErr = nil
 		}
-	}
-
-	if chatwootAllowed {
-		go forwardToChatwoot(ctx, payload, eventName)
 	}
 
 	return webhookErr
@@ -420,6 +327,9 @@ func isEventWhitelistedForDevice(eventName string, deviceConfig *domainChatStora
 // empty, the inner payload is absent, or no JID matches — so events without a JID and the
 // default (no list configured) keep forwarding unchanged. This only gates the generic
 // webhook; the Chatwoot path keeps its own CHATWOOT_IGNORE_JIDS filter.
+//
+// group_jid is matched too: a group call.offer carries the group only there, with
+// from holding the caller.
 func shouldIgnoreWebhookJID(payload map[string]any) bool {
 	ignore := config.WhatsappWebhookIgnoreJids
 	if len(ignore) == 0 {
@@ -429,7 +339,7 @@ func shouldIgnoreWebhookJID(payload map[string]any) bool {
 	if !ok {
 		return false
 	}
-	for _, key := range payloadIdentityKeys {
+	for _, key := range webhookIgnoreJIDKeys {
 		if jid, _ := data[key].(string); utils.MatchesIgnoredJID(jid, ignore) {
 			return true
 		}
@@ -743,7 +653,8 @@ func buildChatwootMessageContent(data map[string]any, isGroup bool, fromName str
 			continue
 		}
 		attachments = append(attachments, path)
-		logrus.Infof("Chatwoot: Found %s attachment at %s", field, path)
+		// The path embeds the sender's filename or caption; keep it out of logs.
+		logrus.Infof("Chatwoot: Found %s attachment", field)
 	}
 
 	// interactive_media carries zero or more paths collected from an
@@ -758,14 +669,14 @@ func buildChatwootMessageContent(data map[string]any, isGroup bool, fromName str
 		for _, path := range paths {
 			if path != "" {
 				attachments = append(attachments, path)
-				logrus.Infof("Chatwoot: Found interactive media attachment at %s", path)
+				logrus.Info("Chatwoot: Found interactive media attachment")
 			}
 		}
 	case []any:
 		for _, v := range paths {
 			if path, ok := v.(string); ok && path != "" {
 				attachments = append(attachments, path)
-				logrus.Infof("Chatwoot: Found interactive media attachment at %s", path)
+				logrus.Info("Chatwoot: Found interactive media attachment")
 			}
 		}
 	}
@@ -802,11 +713,18 @@ func shouldForwardEventToChatwoot(eventName string) bool {
 	}
 }
 
+// isEventWhitelistedForChatwoot uses CHATWOOT_EVENTS when set, so a webhook
+// limited to other events does not starve Chatwoot; otherwise it follows
+// WHATSAPP_WEBHOOK_EVENTS.
 func isEventWhitelistedForChatwoot(eventName string) bool {
-	if len(config.WhatsappWebhookEvents) == 0 {
+	events := config.ChatwootEvents
+	if len(events) == 0 {
+		events = config.WhatsappWebhookEvents
+	}
+	if len(events) == 0 {
 		return true
 	}
-	if isEventWhitelisted(eventName) {
+	if eventInList(events, eventName) {
 		return true
 	}
 	// Derived message sub-events (reactions, edits, deletes) ride along when the
@@ -814,9 +732,15 @@ func isEventWhitelistedForChatwoot(eventName string) bool {
 	// every sub-event to get them mirrored to Chatwoot.
 	switch eventName {
 	case "message.reaction", "message.ack", "message.edited", "message.revoked", "message.deleted":
-		return isEventWhitelisted("message")
+		return eventInList(events, "message")
 	}
 	return false
+}
+
+// ChatwootReceivesMessages reports whether the event filter lets WhatsApp
+// messages through to Chatwoot.
+func ChatwootReceivesMessages() bool {
+	return isEventWhitelistedForChatwoot(EventTypeMessage)
 }
 
 // buildReactionChatwootContent renders the note posted for a reaction event.
@@ -902,6 +826,9 @@ func (r *chatwootReplyTarget) apply(conversationID int, content string, opts *ch
 		return content
 	}
 	if r.link != nil && r.link.ChatwootConversationID == conversationID {
+		// The next delivery attempt may need to apply the original attributes
+		// to a different conversation.
+		opts.ContentAttributes = maps.Clone(opts.ContentAttributes)
 		opts.ContentAttributes["in_reply_to"] = r.link.ChatwootMessageID
 		return content
 	}
@@ -1088,42 +1015,99 @@ func structuredContactsArraySummary(contacts []webhookContactPayload) string {
 	return utils.FormatContactSummary(first.DisplayName, first.PhoneNumber, true)
 }
 
-// syncMessageToChatwoot creates or finds contact/conversation and sends the message.
-func syncMessageToChatwoot(cw *chatwoot.Client, info *chatwootContactInfo, content string, attachments []string, opts chatwoot.MessageOptions, reply *chatwootReplyTarget) (*chatwootSyncResult, error) {
+func deliveredChatwootReplyLink(resolved *chatwoot.ResolvedConfig, deviceID, chatJID string, repo domainChatStorage.IChatStorageRepository, reply *chatwootReplyTarget) (*domainChatStorage.ChatwootMessageLink, error) {
+	cw := resolved.Client
+	if reply != nil {
+		link := reply.link
+		if link != nil && link.DeviceID == deviceID && link.WhatsAppChatJID == chatJID &&
+			link.ChatwootConfigID == resolved.ConfigID && link.ChatwootAccountID == cw.AccountID && link.ChatwootInboxID == cw.InboxID &&
+			link.Direction == "outgoing" && link.ChatwootMessageID > 0 && link.ChatwootConversationID > 0 && !strings.HasPrefix(link.SourceID, "WAID:") {
+			return link, nil
+		}
+	}
+	return latestDeliveredChatwootReply(repo, deviceID, chatJID, resolved.ConfigID, cw.AccountID, cw.InboxID)
+}
+
+func findChatwootConversation(resolved *chatwoot.ResolvedConfig, info *chatwootContactInfo, deviceID string, linkRepo domainChatStorage.IChatStorageRepository, reply *chatwootReplyTarget) (conversationID int, fromLink bool, err error) {
 	// Lock per-identifier mutex to prevent duplicate contact/conversation creation
 	mu := getContactMutex(info.Identifier)
 	mu.Lock()
+	defer mu.Unlock()
 
-	contact, err := cw.FindOrCreateContact(info.Name, info.Identifier, info.IsGroup)
+	cw := resolved.Client
+	contact, err := cw.FindContactByIdentifier(info.Identifier, info.IsGroup)
 	if err != nil {
-		mu.Unlock()
-		return nil, fmt.Errorf("failed to find/create contact for %s: %w", info.Identifier, err)
+		return 0, false, fmt.Errorf("failed to find/create contact for %s: %w", info.Identifier, err)
+	}
+	if contact == nil && linkRepo != nil && deviceID != "" && !info.IsFromMe && !info.IsGroup &&
+		strings.HasSuffix(info.ChatJID, "@"+types.DefaultUserServer) && !strings.HasSuffix(info.Identifier, "@"+types.HiddenUserServer) {
+		link, err := deliveredChatwootReplyLink(resolved, deviceID, info.ChatJID, linkRepo, reply)
+		if err != nil {
+			return 0, false, fmt.Errorf("failed to look up delivered Chatwoot reply: %w", err)
+		}
+		if link != nil {
+			contact, err = cw.ContactForConversation(link.ChatwootConversationID)
+			if err != nil {
+				return 0, false, fmt.Errorf("failed to resolve linked Chatwoot contact: %w", err)
+			}
+			fromLink = contact != nil
+		}
+	}
+	contact, err = cw.ReuseOrCreateContact(info.Name, info.Identifier, info.IsGroup, contact)
+	if err != nil {
+		return 0, false, fmt.Errorf("failed to find/create contact for %s: %w", info.Identifier, err)
 	}
 	logrus.Infof("Chatwoot: Contact ID: %d", contact.ID)
 
 	conversation, err := cw.FindOrCreateConversation(contact.ID, info.ChatJID)
-	mu.Unlock()
 	if err != nil {
-		return nil, fmt.Errorf("failed to find/create conversation for contact %d: %w", contact.ID, err)
+		return 0, fromLink, fmt.Errorf("failed to find/create conversation for contact %d: %w", contact.ID, err)
 	}
-	logrus.Infof("Chatwoot: Conversation ID: %d", conversation.ID)
-	content = reply.apply(conversation.ID, content, &opts)
+	return conversation.ID, fromLink, nil
+}
 
-	logrus.Infof("Chatwoot: Creating message (Length: %d, Attachments: %d)", len(content), len(attachments))
+// syncMessageToChatwoot creates or finds contact/conversation and sends the message.
+func syncMessageToChatwoot(resolved *chatwoot.ResolvedConfig, info *chatwootContactInfo, content string, attachments []string, opts chatwoot.MessageOptions, reply *chatwootReplyTarget, deviceID string, linkRepo domainChatStorage.IChatStorageRepository) (*chatwootSyncResult, error) {
+	cw := resolved.Client
+
 	messageType := "incoming"
 	if info.IsFromMe {
 		messageType = "outgoing"
 	}
-	msgID, err := cw.CreateMessage(conversation.ID, content, messageType, attachments, opts)
+	messageAttachments := make([]chatwoot.MessageAttachment, 0, len(attachments))
+	for _, path := range attachments {
+		messageAttachments = append(messageAttachments, chatwoot.MessageAttachment{Path: path, FileName: utils.StoredMediaDisplayName(path)})
+	}
+	post := func(conversationID int) (int, error) {
+		logrus.Infof("Chatwoot: Conversation ID: %d", conversationID)
+		attemptOpts := opts
+		body := reply.apply(conversationID, content, &attemptOpts)
+		logrus.Infof("Chatwoot: Creating message (Length: %d, Attachments: %d)", len(body), len(attachments))
+		return cw.CreateMessage(conversationID, body, messageType, messageAttachments, attemptOpts)
+	}
+	conversationID, fromLink, err := findChatwootConversation(resolved, info, deviceID, linkRepo, reply)
+	var msgID int
+	if err == nil {
+		msgID, err = post(conversationID)
+	}
+	var statusErr *chatwoot.HTTPStatusError
+	if fromLink && errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+		// Resolve normally once after a stale selection or post. Looking up
+		// the same delivered link again can select the missing route.
+		conversationID, _, err = findChatwootConversation(resolved, info, deviceID, nil, nil)
+		if err == nil {
+			msgID, err = post(conversationID)
+		}
+	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to create message: %w", err)
+		return nil, fmt.Errorf("failed to forward message: %w", err)
 	}
 	chatwoot.MarkMessageAsSent(cw.AccountID, msgID)
 
 	logrus.Infof("Chatwoot: Message synced successfully for %s", info.Identifier)
 	return &chatwootSyncResult{
 		MessageID:      msgID,
-		ConversationID: conversation.ID,
+		ConversationID: conversationID,
 		InboxID:        cw.InboxID,
 	}, nil
 }
@@ -1221,6 +1205,11 @@ func deleteTargetMessageID(eventName string, data map[string]any) string {
 // is resolved to a phone JID and stored beside it. The first two are the
 // addresses the event is delivered under; the rest are aliases.
 var payloadIdentityKeys = []string{"chat_id", "from", "chat_lid", "from_lid", "sender_alt", "recipient_alt"}
+
+// webhookIgnoreJIDKeys are the fields WHATSAPP_WEBHOOK_IGNORE_JIDS is matched
+// against. group_jid stays out of payloadIdentityKeys so CHATWOOT_IGNORE_JIDS
+// keeps its current semantics.
+var webhookIgnoreJIDKeys = append(slices.Clone(payloadIdentityKeys), "group_jid")
 
 // addChatwootIdentityAliases copies original LID chats and alt JIDs onto a
 // webhook payload. chat_id/from may already be the phone; exclusion still has
@@ -1696,6 +1685,15 @@ func enqueueChatwootForwardRetry(linkRepo domainChatStorage.IChatStorageReposito
 }
 
 func syncPayloadToChatwoot(ctx context.Context, payload map[string]any, eventName, deviceID string, linkRepo domainChatStorage.IChatStorageRepository) error {
+	// In WhatsApp a vote only updates the tally on the poll, so one Chatwoot
+	// message per vote floods the conversation. Webhooks still get every vote.
+	// Checked before the client lookup so a lookup failure never queues a vote.
+	voteData, _ := payload["payload"].(map[string]any)
+	if poll := chatwootPollFromPayload(voteData); eventName == EventTypeMessage && poll != nil && poll.Type == "vote" {
+		logrus.Debugf("Chatwoot: Skipping poll vote %v", voteData["id"])
+		return nil
+	}
+
 	resolved, err := getChatwootClientFn(deviceID)
 	if err != nil {
 		// Transient resolution failure (e.g. storage error): let the caller retry.
@@ -1831,7 +1829,11 @@ func syncPayloadToChatwoot(ctx context.Context, payload map[string]any, eventNam
 		}
 	}
 
-	result, err := syncMessageToChatwoot(cw, info, content, attachments, msgOpts, reply)
+	var deliveredLinkRepo domainChatStorage.IChatStorageRepository
+	if eventName == EventTypeMessage {
+		deliveredLinkRepo = linkRepo
+	}
+	result, err := syncMessageToChatwoot(resolved, info, content, attachments, msgOpts, reply, deviceID, deliveredLinkRepo)
 	if err != nil {
 		return err
 	}
@@ -1859,7 +1861,7 @@ func forwardToChatwoot(ctx context.Context, payload map[string]any, eventName st
 	logrus.Infof("Chatwoot: Attempting to forward %s...", eventName)
 	deviceID, linkRepo := chatwootLinkStorageFromContext(ctx)
 	if err := syncPayloadToChatwoot(ctx, payload, eventName, deviceID, linkRepo); err != nil {
-		logrus.Errorf("Chatwoot: %v", err)
+		logrus.Errorf("Chatwoot: Failed to forward WhatsApp message %s: %v", chatwootForwardMessageID(payload), utils.MediaErrorForLog(err))
 		enqueueChatwootForwardRetry(linkRepo, deviceID, eventName, payload, err)
 	}
 }
@@ -1919,7 +1921,7 @@ func processDueChatwootForwardRetries(repo domainChatStorage.IChatStorageReposit
 			if markErr := repo.MarkChatwootForwardEventFailed(event.ID, truncateChatwootForwardError(err), nextAttempt); markErr != nil {
 				logrus.Errorf("Chatwoot: Failed to reschedule retry job %d: %v", event.ID, markErr)
 			}
-			logrus.Warnf("Chatwoot: Retry job %d failed, next attempt at %s: %v", event.ID, nextAttempt.Format(time.RFC3339), err)
+			logrus.Warnf("Chatwoot: Retry job %d for WhatsApp message %s failed, next attempt at %s: %v", event.ID, event.WhatsAppMessageID, nextAttempt.Format(time.RFC3339), utils.MediaErrorForLog(err))
 			continue
 		}
 		if err := repo.MarkChatwootForwardEventDone(event.ID); err != nil {
@@ -1975,7 +1977,11 @@ func buildEditDeleteChatwootContent(eventName string, data map[string]any, isGro
 
 // isEventWhitelisted checks if the given event name is in the configured whitelist
 func isEventWhitelisted(eventName string) bool {
-	for _, allowed := range config.WhatsappWebhookEvents {
+	return eventInList(config.WhatsappWebhookEvents, eventName)
+}
+
+func eventInList(events []string, eventName string) bool {
+	for _, allowed := range events {
 		if strings.EqualFold(strings.TrimSpace(allowed), eventName) {
 			return true
 		}
@@ -1983,53 +1989,14 @@ func isEventWhitelisted(eventName string) bool {
 	return false
 }
 
-// getGroupName fetches the group name from WhatsApp using the group JID.
-// Uses a per-device TTL cache to avoid repeated API calls for the same group.
+// getGroupName keeps the Chatwoot path scoped to an explicit device context.
 func getGroupName(ctx context.Context, groupJID string) string {
-	instance, ok := DeviceFromContext(ctx)
-	if !ok || instance == nil {
+	if instance, ok := DeviceFromContext(ctx); !ok || instance == nil {
 		return ""
 	}
-	client := instance.GetClient()
-	if client == nil || groupNameCacheDeviceID(client) == "" {
-		return ""
-	}
-
-	// Check this device's cache first. The name is only ever served to the
-	// device that fetched it.
-	deviceID := groupNameCacheDeviceID(client)
-	if name, ok := getCachedGroupName(deviceID, groupJID); ok {
-		logrus.Debugf("Chatwoot: Using cached group name for %s: %s", groupJID, name)
-		return name
-	}
-
 	jid, err := types.ParseJID(groupJID)
 	if err != nil {
-		logrus.Warnf("Chatwoot: Failed to parse group JID %s: %v", groupJID, err)
 		return ""
 	}
-
-	// Use a fresh context with timeout since the original context may be canceled
-	// (this function is called from a goroutine)
-	freshCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	cacheResult := beginGroupNameCacheFetch(deviceID, groupJID)
-	defer cacheResult("")
-
-	logrus.Debugf("Chatwoot: Fetching group info for %s", groupJID)
-	groupInfo, err := fetchGroupInfoFn(freshCtx, client, jid)
-	if err != nil {
-		logrus.Warnf("Chatwoot: Failed to get group info for %s: %v", groupJID, err)
-		return ""
-	}
-
-	if groupInfo != nil && groupInfo.Name != "" {
-		logrus.Infof("Chatwoot: Got group name: %s", groupInfo.Name)
-		// Cache the result
-		cacheResult(groupInfo.Name)
-		return groupInfo.Name
-	}
-
-	logrus.Debug("Chatwoot: GroupInfo is nil or Name is empty")
-	return ""
+	return ResolveGroupSubject(context.WithoutCancel(ctx), jid)
 }

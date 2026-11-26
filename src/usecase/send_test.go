@@ -437,7 +437,7 @@ func TestMergeReplyContextAddsQuoteFields(t *testing.T) {
 
 	deviceID := "6289605618749@s.whatsapp.net"
 	ctx := whatsapp.ContextWithDevice(context.Background(), whatsapp.NewDeviceInstance(deviceID, nil, nil))
-	got := service.mergeReplyContext(ctx, contextInfo, &replyID)
+	got := service.mergeReplyContext(ctx, contextInfo, &replyID, types.JID{})
 
 	if got != contextInfo {
 		t.Fatal("expected existing context info to be reused")
@@ -459,6 +459,55 @@ func TestMergeReplyContextAddsQuoteFields(t *testing.T) {
 	}
 }
 
+func TestMergeReplyContextChecksActualChatwootRecipient(t *testing.T) {
+	const requested = "5500912345678@s.whatsapp.net"
+	recipient := types.NewJID("550012345678", types.DefaultUserServer)
+	ctx := whatsapp.WithChatwootQuote(t.Context(), recipient.String())
+	replyID := "previous"
+	row := &domainChatStorage.Message{ChatJID: requested}
+	service := serviceSend{chatStorageRepo: &replyMessageRepo{message: row}}
+	require.Nil(t, service.mergeReplyContext(ctx, nil, &replyID, recipient))
+	row.ChatJID = recipient.String()
+	require.Equal(t, replyID, service.mergeReplyContext(ctx, nil, &replyID, recipient).GetStanzaID())
+}
+
+func TestMergeReplyContextPrivateReplyCarriesGroupRemoteJID(t *testing.T) {
+	replyID := "3EB089B9D6ADD58153C561"
+	group := "120363025555555555@g.us"
+	author := types.NewJID("628123456789", types.DefaultUserServer)
+
+	tests := []struct {
+		name       string
+		chatJID    string
+		recipient  types.JID
+		wantRemote string
+	}{
+		{name: "group message quoted in the author's chat", chatJID: group, recipient: author, wantRemote: group},
+		{name: "group message quoted in the same group", chatJID: group, recipient: types.NewJID("120363025555555555", types.GroupServer)},
+		{name: "1:1 message stored under the LID", chatJID: "123456789012345@lid", recipient: author},
+		{name: "1:1 message in the same chat", chatJID: author.String(), recipient: author},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := serviceSend{chatStorageRepo: &replyMessageRepo{message: &domainChatStorage.Message{
+				ChatJID: tt.chatJID,
+				Sender:  author.String(),
+				Content: "quoted message body",
+			}}}
+
+			got := service.mergeReplyContext(context.Background(), nil, &replyID, tt.recipient)
+
+			if got.GetRemoteJID() != tt.wantRemote {
+				t.Fatalf("expected remote JID %q, got %q", tt.wantRemote, got.GetRemoteJID())
+			}
+			if got.GetStanzaID() != replyID {
+				t.Fatalf("expected stanza ID %q, got %q", replyID, got.GetStanzaID())
+			}
+		})
+	}
+}
+
 func TestMergeReplyContextPreservesExistingContext(t *testing.T) {
 	replyID := "3EB089B9D6ADD58153C561"
 	repo := &replyMessageRepo{
@@ -475,7 +524,7 @@ func TestMergeReplyContextPreservesExistingContext(t *testing.T) {
 		MentionedJID:    []string{"628999999999@s.whatsapp.net"},
 	}
 
-	got := service.mergeReplyContext(context.Background(), contextInfo, &replyID)
+	got := service.mergeReplyContext(context.Background(), contextInfo, &replyID, types.JID{})
 
 	if !got.GetIsForwarded() {
 		t.Fatal("expected forwarded flag to be preserved")
@@ -529,7 +578,7 @@ func TestMergeReplyContextLeavesExistingContextWhenReplyUnavailable(t *testing.T
 				err:     tt.err,
 			}}
 
-			got := service.mergeReplyContext(context.Background(), contextInfo, tt.replyID)
+			got := service.mergeReplyContext(context.Background(), contextInfo, tt.replyID, types.JID{})
 
 			if got != contextInfo {
 				t.Fatal("expected existing context info to be reused")
@@ -573,7 +622,7 @@ func TestForwardDurationOptionExplicitZero(t *testing.T) {
 	got := forwardDurationOption(context.Background(), serviceSend{}, domainSend.ForwardRequest{
 		Phone:    "628123456789@s.whatsapp.net",
 		Duration: &zero,
-	})
+	}, types.NewJID("628123456789", types.DefaultUserServer))
 	if got == nil || *got != 0 {
 		t.Fatalf("expected explicit duration 0 to be honored, got %v", got)
 	}
@@ -620,7 +669,7 @@ func TestMergeReplyContextNormalizesALegacyDeviceSuffixedSender(t *testing.T) {
 
 	ctx := whatsapp.ContextWithDevice(context.Background(),
 		whatsapp.NewDeviceInstance("6289605618749@s.whatsapp.net", nil, nil))
-	got := service.mergeReplyContext(ctx, &waE2E.ContextInfo{}, &replyID)
+	got := service.mergeReplyContext(ctx, &waE2E.ContextInfo{}, &replyID, types.JID{})
 
 	if got.GetParticipant() != "628123456789@s.whatsapp.net" {
 		t.Fatalf("expected the stored sender to be normalized, got %q", got.GetParticipant())
@@ -638,7 +687,7 @@ func TestMergeReplyContextPassesThroughAnUnparseableSender(t *testing.T) {
 
 	ctx := whatsapp.ContextWithDevice(context.Background(),
 		whatsapp.NewDeviceInstance("6289605618749@s.whatsapp.net", nil, nil))
-	got := service.mergeReplyContext(ctx, &waE2E.ContextInfo{}, &replyID)
+	got := service.mergeReplyContext(ctx, &waE2E.ContextInfo{}, &replyID, types.JID{})
 
 	if got.GetParticipant() != "not-a-jid" {
 		t.Fatalf("expected the raw sender to survive, got %q", got.GetParticipant())

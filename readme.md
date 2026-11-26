@@ -48,12 +48,12 @@ Download:
 
 ## Documentation
 
-Read the detailed [GOWA documentation](https://github.com/aldinokemal/gowa-docs) for setup,
+Read the detailed [GOWA documentation](https://gowa-docs.mintlify.site/) for setup,
 authentication, device management, webhooks, examples, and the API reference.
-The documentation tracks merged `main`, including changes after v9.7.0. Check the
+The documentation tracks `main`. Check the
 release notes and `GET /app/info` when using a pinned binary or container tag.
 
-- [Experimental interactive messages](./docs/interactive-messages.md) covers native-flow buttons, location requests, and image carousels. `POST /send/interactive` is immediate-only and REST-only; recipient compatibility varies.
+- [Experimental interactive messages](./docs/interactive-messages.md) covers native-flow buttons, location requests, and image carousels. `POST /send/interactive` (and MCP `whatsapp_send` `type: interactive`) is immediate-only; recipient compatibility varies.
 - [Webhook payloads](./docs/webhook-payload.md) describes event schemas and signing.
 - [Chatwoot](./docs/chatwoot.md), [MCP OAuth](./docs/mcp-oauth.md), [Neon](./docs/neon.md), and [media storage](./docs/media-storage.md) provide integration and operations guides.
 - [OpenAPI](./docs/openapi.yaml) defines the machine-readable REST contract, including `/send/interactive`.
@@ -65,50 +65,16 @@ release notes and `GET /app/info` when using a pinned binary or container tag.
 
 ## Breaking Changes
 
-- `v6`
-  - REST mode requires `<binary> rest` instead of `<binary>`.
-    - Example: `./whatsapp rest` instead of `./whatsapp`.
-  - MCP mode required `<binary> mcp`.
-    - Example: `./whatsapp mcp`.
-- `v7`
-  - Starting with version 7.x, binaries are built with GoReleaser and can be downloaded from the
-    [latest release](https://github.com/aldinokemal/go-whatsapp-web-multidevice/releases/latest).
-- `v8`
-  - **Multi-device support**: You can now connect and manage multiple WhatsApp accounts simultaneously in a single
-    server instance.
-  - **New Device Management API**: New endpoints under `/devices` manage multiple devices.
-  - **Device scoping required**: All device-scoped REST API calls now require either:
-    - `X-Device-Id` header, or
-    - `device_id` query parameter.
-    - If only one device is registered, it is used as the default.
-  - **WebSocket device selection**: Connect to `/ws?device_id=<id>` for the device middleware. The current WebSocket hub broadcasts dashboard events to all authenticated subscribers. This parameter does not isolate events between accounts; use per-device webhooks for application integrations.
-  - **Remote UI support**: CORS allows the `Authorization` and `X-Device-Id` headers, so a standalone web UI
-    (for example, [gowa-ui](https://github.com/aldinokemal/gowa-ui)) hosted on another origin can call the API directly.
-    `GET /app/info` exposes the version and media size limits. Because browsers cannot set headers on WebSocket
-    connections, pass `/ws?device_id=<id>&authorization=<base64(user:pass)>` when Basic Auth is enabled
-    (use TLS—the credential is visible in the URL).
-  - **Webhook payload changes**: All webhook payloads now include a top-level `device_id` field identifying which
-    device received the event:
-
-    ```json
-    {
-      "event": "message",
-      "device_id": "628123456789@s.whatsapp.net",
-      "payload": { ... }
-    }
-    ```
-
-- `v9`
-  - **MCP and API are unified under `rest`**: MCP is no longer a separate mode or process. Run
-    `./whatsapp rest` to serve both the REST API and MCP; MCP is available at `/mcp` (no standalone `mcp`
-    subcommand). See [MCP Server (Model Context Protocol)](#mcp-server-model-context-protocol) for migration
-    details.
-  - **UI moved to a separate repository**: The web dashboard is no longer bundled in this repo. It now lives at
-    [aldinokemal/gowa-ui](https://github.com/aldinokemal/gowa-ui) and ships as a single self-contained
-    `gowa-ui.html`. The server downloads the latest dashboard release at startup, verifies its SHA-256 digest,
-    caches it under `storages/ui/`, and serves it at `/`.
-    See [Web dashboard (gowa-ui)](#web-dashboard-gowa-ui) for the `APP_UI_*` settings, supply-chain pinning,
-    and air-gapped deployment.
+| Version | Area | Change |
+| --- | --- | --- |
+| v6 | CLI | Use `./whatsapp rest` for REST. This version used `./whatsapp mcp` for standalone MCP. |
+| v7 | Binaries | GoReleaser builds are available from the [GitHub releases](https://github.com/aldinokemal/go-whatsapp-web-multidevice/releases/latest). |
+| v8 | Multi-device API | Manage WhatsApp accounts under `/devices`. For device-scoped REST calls, use the `X-Device-Id` header or the `device_id` query parameter. A single registered device is selected by default. |
+| v8 | WebSocket | Connect to `/ws?device_id=<id>`. When Basic Auth is enabled, append `&authorization=<base64(user:pass)>` over TLS because the credential is visible in the URL. Dashboard events are broadcast to all authenticated subscribers. Use per-device webhooks for integrations that require account isolation. |
+| v8 | Remote UI | CORS allows the `Authorization` and `X-Device-Id` headers, so a standalone UI such as [gowa-ui](https://github.com/aldinokemal/gowa-ui) can call the API from another origin. `GET /app/info` exposes the version and media limits. |
+| v8 | Webhooks | Payloads include a top-level `device_id` identifying the device that received the event. |
+| v9 | MCP | Run `./whatsapp rest` for both REST and MCP. MCP is available at `/mcp`. See the [MCP migration guide](#mcp-server-model-context-protocol). |
+| v9 | Web dashboard | The server downloads the latest [gowa-ui](https://github.com/aldinokemal/gowa-ui) release at startup, verifies its SHA-256 digest, caches `gowa-ui.html` under `storages/ui/`, and serves it at `/`. See [Web dashboard](#web-dashboard-gowa-ui) for `APP_UI_*` settings, pinning, and offline deployment. |
 
 ## Features
 
@@ -178,6 +144,10 @@ release notes and `GET /app/info` when using a pinned binary or container tag.
   - `available` — Mark the account as online (suppresses phone notifications).
   - `unavailable` — Register the push name without going online (default; preserves phone notifications).
   - `none` — Skip presence entirely (the push name is not registered, so contacts may see `-` as the name).
+- Full message history on pairing:
+  - `--full-history-sync=true` or `WHATSAPP_FULL_HISTORY_SYNC=true` asks the phone for the full history when a device
+    pairs (new pairings only). `--full-history-days` / `WHATSAPP_FULL_HISTORY_DAYS` and `WHATSAPP_FULL_HISTORY_SIZE_MB`
+    bound the request.
 - Daily presence pulse:
   - `--presence-pulse-enabled=true` or `WHATSAPP_PRESENCE_PULSE_ENABLED=true` (default: `true`).
   - `--presence-pulse-interval=24h` controls how often each connected device is pulsed.
@@ -274,8 +244,8 @@ A set environment value can therefore override the matching flag. The `.env` fil
 only fills variables not already set in the process environment.
 
 Explicit flags win for MCP OAuth settings, `--allow-unauthenticated`,
-`--trusted-origins`, `--chatwoot-webhook-allow-unsigned`, and
-`--webhook-all-device-receipts`. Configure each option in one place to avoid
+`--trusted-origins`, `--chatwoot-webhook-allow-unsigned`,
+`--webhook-all-device-receipts`, and `--timezone`. Configure each option in one place to avoid
 conflicting values. For example, `WHATSAPP_WEBHOOK_INSECURE_SKIP_VERIFY=true`
 overrides `--webhook-insecure-skip-verify=false`.
 
@@ -295,6 +265,7 @@ To use environment variables:
 | `APP_HOST`                              | Host address to bind the server                               | `0.0.0.0`                                    | `APP_HOST=127.0.0.1`                          |
 | `APP_DEBUG`                             | Enable debug logging                                          | `false`                                      | `APP_DEBUG=true`                              |
 | `APP_OS`                                | OS name (device name in WhatsApp)                             | `GOWA`                                       | `APP_OS=MyApp`                                |
+| `APP_TIMEZONE`                          | IANA timezone for chat, message and newsletter timestamps in REST and MCP responses, as RFC3339 with that offset. `TZ` is not used; storage, webhooks and other responses stay in UTC. Flag: `--timezone` | `UTC`                                        | `APP_TIMEZONE=Europe/Paris`                   |
 | `APP_BASIC_AUTH`                        | Basic authentication credentials. Required for a non-loopback bind, with a username and password in every entry; loopback stays open for local dev | -                             | `APP_BASIC_AUTH=user1:pass1,user2:pass2`      |
 | `APP_ALLOW_UNAUTHENTICATED`             | Expose the API with no Basic Auth on a non-loopback bind (insecure; for reverse proxies) | `false`                       | `APP_ALLOW_UNAUTHENTICATED=true`              |
 | `APP_TRUSTED_ORIGINS`                   | Extra browser origins for state-changing requests (request host and specific CORS origins are included). A reverse proxy that rewrites `Host` needs `proxy_set_header Host $host`, or `APP_TRUSTED_PROXIES` with `X-Forwarded-Host`, or the public origin listed here. App and extension origins such as `capacitor://localhost` are matched as written. `null` is never trusted: gowa-ui opened from a `file://` URL cannot make changes or open `/ws`, so serve it from gowa (the default) or from an http(s) origin listed here | -          | `APP_TRUSTED_ORIGINS=https://ui.example.com`  |
@@ -334,6 +305,9 @@ To use environment variables:
 | `WHATSAPP_WEBHOOK_DEVICE_MERGE_GLOBAL`  | Per-device webhook adds to the global URLs instead of replacing them | `false`                               | `WHATSAPP_WEBHOOK_DEVICE_MERGE_GLOBAL=true`   |
 | `WHATSAPP_ACCOUNT_VALIDATION`           | Enable account validation                                     | `true`                                       | `WHATSAPP_ACCOUNT_VALIDATION=false`           |
 | `WHATSAPP_PRESENCE_ON_CONNECT`          | Presence on connect: `available`, `unavailable`, or `none`    | `unavailable`                                | `WHATSAPP_PRESENCE_ON_CONNECT=unavailable`    |
+| `WHATSAPP_FULL_HISTORY_SYNC`            | Pair as Desktop and ask the phone for the FULL history (new pairings only) | `false`                                      | `WHATSAPP_FULL_HISTORY_SYNC=true`             |
+| `WHATSAPP_FULL_HISTORY_DAYS`            | Days of history requested when full history sync is on        | `3650`                                       | `WHATSAPP_FULL_HISTORY_DAYS=365`              |
+| `WHATSAPP_FULL_HISTORY_SIZE_MB`         | Size limit (MB) requested when full history sync is on        | `10240`                                      | `WHATSAPP_FULL_HISTORY_SIZE_MB=2048`          |
 | `WHATSAPP_PROXY`                        | Outbound proxy for the WhatsApp WebSocket (SOCKS5/HTTP/HTTPS) | -                                            | `WHATSAPP_PROXY=socks5://user:pass@host:1080` |
 | `WHATSAPP_PRESENCE_PULSE_ENABLED`       | Enable daily available/unavailable presence pulse             | `true`                                       | `WHATSAPP_PRESENCE_PULSE_ENABLED=false`       |
 | `WHATSAPP_PRESENCE_PULSE_INTERVAL`      | Interval between presence pulses                              | `24h`                                        | `WHATSAPP_PRESENCE_PULSE_INTERVAL=24h`        |
@@ -363,8 +337,10 @@ To use environment variables:
 | `CHATWOOT_SIGN_DELIMITER`               | Delimiter between Chatwoot agent signature and message body   | `\n\n`                                       | `CHATWOOT_SIGN_DELIMITER=" - "`               |
 | `CHATWOOT_FORWARD_EDITS`                | Mirror WhatsApp edits into Chatwoot threaded notes            | `true`                                       | `CHATWOOT_FORWARD_EDITS=false`                |
 | `CHATWOOT_FORWARD_DELETES`              | Mirror WhatsApp delete-for-everyone events into Chatwoot notes | `true`                                      | `CHATWOOT_FORWARD_DELETES=false`              |
+| `CHATWOOT_EVENTS`                       | Events forwarded to Chatwoot (empty = follow `WHATSAPP_WEBHOOK_EVENTS`) | -                                   | `CHATWOOT_EVENTS=message`                     |
 | `CHATWOOT_MESSAGE_READ`                 | Sync read state for linked WhatsApp/Chatwoot messages         | `false`                                      | `CHATWOOT_MESSAGE_READ=true`                  |
 | `CHATWOOT_MESSAGE_DELETE`               | Delete linked opposite-side messages when deletion is reported | `false`                                     | `CHATWOOT_MESSAGE_DELETE=true`                |
+| `CHATWOOT_REVOKE_ON_DELETE`             | Revoke on WhatsApp the messages deleted in Chatwoot only      | `false`                                      | `CHATWOOT_REVOKE_ON_DELETE=true`              |
 
 **Documentation:**
 
@@ -474,21 +450,22 @@ running, the MCP endpoint is available at `http://<host>:<port><base-path>/mcp` 
 
 #### Available MCP Tools
 
-There are seven consolidated tools; agents choose behavior through a `type`/`action` argument instead of one tool per
+There are eight consolidated tools; agents choose behavior through a `type`/`action` argument instead of one tool per
 operation:
 
 | Tool               | `type` / `action` values                                                                                                                                     |
 |--------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `whatsapp_send`    | `text`, `image`, `video`, `audio`, `document`, `sticker`, `location`, `contact`, `poll`, `link`, `forward`                                                    |
+| `whatsapp_send`    | `text`, `image`, `video`, `audio`, `document`, `sticker`, `location`, `contact`, `poll`, `link`, `forward`, `interactive`, `chat_presence`, `presence`        |
 | `whatsapp_schedule` | `list`, `get`, `pause`, `resume`, `cancel`                                                                                                                    |
 | `whatsapp_message` | `react`, `edit`, `revoke`, `delete`, `mark_read`, `mark_played`, `star`, `unstar`, `download_media`                                                           |
-| `whatsapp_chat`    | `list_chats`, `list_contacts`, `get_messages`, `archive`                                                                                                      |
-| `whatsapp_group`   | `create`, `join_with_link`, `leave`, `info`, `participants`, `add_participants`, `remove_participants`, `promote`, `demote`, `invite_link`, `set_name`, `set_topic`, `set_settings`, `join_requests`, `manage_join_requests` |
+| `whatsapp_chat`    | `list_chats`, `list_contacts`, `get_messages`, `archive`, `pin`, `set_disappearing`, `request_history`                                                        |
+| `whatsapp_group`   | `create`, `join_with_link`, `info_from_link`, `leave`, `info`, `participants`, `add_participants`, `remove_participants`, `promote`, `demote`, `invite_link`, `set_name`, `set_topic`, `set_settings`, `set_photo`, `remove_photo`, `join_requests`, `manage_join_requests` |
 | `whatsapp_app`     | `status`, `login_qr`, `login_code`, `logout`, `reconnect`                                                                                                     |
 | `whatsapp_newsletter` | `follow`, `unfollow`, `info`, `directory`, `messages`, `message_updates`, `live_updates_subscribe`, `live_updates_unsubscribe`, `live_updates_list`        |
+| `whatsapp_user`    | `info`, `check`, `business_profile`, `avatar`, `subscribe_presence`, `set_push_name`, `my_privacy`, `my_groups`, `my_newsletters`, `my_contacts_detailed` |
 
 `whatsapp_send` also accepts `scheduled_at`, `timezone`, `recurrence`, `weekdays`, `day_of_month`, `end_at`, and
-`occurrence_limit` to schedule the message instead of sending it now; manage the result with `whatsapp_schedule`.
+`occurrence_limit` to schedule the message instead of sending it now (except `interactive`, `chat_presence`, and `presence`); manage the result with `whatsapp_schedule`.
 
 #### Device selection
 
@@ -737,6 +714,7 @@ You may also fork or modify the source code.
 | ✅       | List My Newsletters                    | GET    | /user/my/newsletters                |
 | ✅       | Get My Privacy Settings                | GET    | /user/my/privacy                    |
 | ✅       | List My Contacts                       | GET    | /user/my/contacts                   |
+| ✅       | List My Contacts (detailed names)      | GET    | /user/my/contacts/detailed          |
 | ✅       | Check WhatsApp User                    | GET    | /user/check                         |
 | ✅       | Get Business Profile                   | GET    | /user/business-profile              |
 | ✅       | Send Message                           | POST   | /send/message                       |
@@ -767,6 +745,7 @@ You may also fork or modify the source code.
 | ✅       | Forward Message                        | POST   | /message/:message_id/forward        |
 | ✅       | Download Message Media                 | GET    | /message/:message_id/download       |
 | ✅       | Reject Call                            | POST   | /call/reject                        |
+| ✅       | Get Call Logs                          | GET    | /call/logs                          |
 | ✅       | Join Group with Link                   | POST   | /group/join-with-link               |
 | ✅       | Get Group Info from Link               | GET    | /group/info-from-link               |
 | ✅       | Get Group Info                         | GET    | /group/info                         |
@@ -871,6 +850,7 @@ export CGO_CFLAGS_ALLOW="-Xpreprocessor"
 
 - This project is unofficial and not affiliated with WhatsApp.
 - Use the official WhatsApp Business Platform when you require a supported, production-grade integration.
+- This project follows the [Code of Conduct](./CODE_OF_CONDUCT.md).
 
 ## MCP Events
 

@@ -45,12 +45,29 @@ func (r *SQLiteRepository) StoreChat(chat *domainChatStorage.Chat) error {
 
 	// Write before reading: a WAL transaction that reads first fails with
 	// SQLITE_BUSY instead of waiting when another connection commits in between.
-	result, err := tx.Exec(`
-		UPDATE chats SET name = ?,
-			ephemeral_expiration = CASE WHEN ? THEN ? ELSE ephemeral_expiration END,
-			updated_at = ?, archived = ?
-		WHERE jid = ? AND device_id = ?
-	`, chat.Name, chat.EphemeralExpirationSet(), chat.EphemeralExpiration, chat.UpdatedAt, chat.Archived, chat.JID, chat.DeviceID)
+	groupID := strings.TrimSuffix(chat.JID, "@g.us")
+	isGroup := strings.HasSuffix(chat.JID, "@g.us")
+	// Message and history candidates may be stale. Only a placeholder group name
+	// can be healed by StoreChat; explicit renames go through UpdateGroupSubject.
+	healGroupName := isGroup && strings.TrimSpace(chat.Name) != "" && chat.Name != chat.JID &&
+		chat.Name != groupID && strings.TrimPrefix(chat.Name, "Group ") != groupID
+
+	var result sql.Result
+	if isGroup {
+		result, err = tx.Exec(`
+			UPDATE chats SET name = CASE WHEN ? AND name IN ('', 'Group ' || ?, chats.jid, ?) THEN ? ELSE name END,
+				ephemeral_expiration = CASE WHEN ? THEN ? ELSE ephemeral_expiration END,
+				updated_at = ?, archived = ?
+			WHERE jid = ? AND device_id = ?
+		`, healGroupName, groupID, groupID, chat.Name, chat.EphemeralExpirationSet(), chat.EphemeralExpiration, chat.UpdatedAt, chat.Archived, chat.JID, chat.DeviceID)
+	} else {
+		result, err = tx.Exec(`
+			UPDATE chats SET name = ?,
+				ephemeral_expiration = CASE WHEN ? THEN ? ELSE ephemeral_expiration END,
+				updated_at = ?, archived = ?
+			WHERE jid = ? AND device_id = ?
+		`, chat.Name, chat.EphemeralExpirationSet(), chat.EphemeralExpiration, chat.UpdatedAt, chat.Archived, chat.JID, chat.DeviceID)
+	}
 	if err != nil {
 		return err
 	}
@@ -81,6 +98,34 @@ func (r *SQLiteRepository) StoreChat(chat *domainChatStorage.Chat) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// UpdateGroupSubject updates only the name and timestamp of an existing group row.
+func (r *SQLiteRepository) UpdateGroupSubject(deviceID, groupJID, subject string) (bool, error) {
+	return r.setGroupSubject(deviceID, groupJID, subject, false)
+}
+
+// FillGroupSubject changes only a placeholder on this device. A completed lookup
+// must never undo a rename or a meaningful name already supplied by history.
+func (r *SQLiteRepository) FillGroupSubject(deviceID, groupJID, subject string) error {
+	_, err := r.setGroupSubject(deviceID, groupJID, subject, true)
+	return err
+}
+
+func (r *SQLiteRepository) setGroupSubject(deviceID, groupJID, subject string, onlyPlaceholder bool) (bool, error) {
+	groupID, isGroup := strings.CutSuffix(groupJID, "@g.us")
+	if deviceID == "" || !isGroup || groupID == "" || strings.TrimSpace(subject) == "" {
+		return false, fmt.Errorf("group subject requires device id, group JID, and nonempty subject")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := r.db.ExecContext(ctx, `UPDATE chats SET name = ?, updated_at = ?
+		WHERE device_id = ? AND jid = ? AND (NOT ? OR name IN ('', 'Group ' || ?, jid, ?))`, subject, time.Now(), deviceID, groupJID, onlyPlaceholder, groupID, groupID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
 }
 
 // GetChat retrieves a chat by JID
@@ -453,6 +498,27 @@ func (r *SQLiteRepository) storeSentMessagePreservingEdits(message *domainChatSt
 	return insertErr
 }
 
+// UpdateMessageMedia replaces only the media location and integrity fields of
+// one device's stored message. It never rewrites content or other fields, so a
+// concurrent edit stored while the media was being recovered is preserved.
+func (r *SQLiteRepository) UpdateMessageMedia(deviceID, chatJID, messageID string, media domainChatStorage.MessageMedia) error {
+	if deviceID == "" || chatJID == "" || messageID == "" {
+		return errors.New("device ID, chat JID and message ID are required")
+	}
+	result, err := r.db.Exec(`
+		UPDATE messages SET url = ?, direct_path = ?, file_sha256 = ?, file_enc_sha256 = ?, file_length = ?, updated_at = ?
+		WHERE id = ? AND chat_jid = ? AND device_id = ?
+	`, media.URL, media.DirectPath, media.FileSHA256, media.FileEncSHA256, media.FileLength, time.Now(),
+		messageID, chatJID, deviceID)
+	if err != nil {
+		return err
+	}
+	if rows, _ := result.RowsAffected(); rows == 0 {
+		return fmt.Errorf("message %s not found in chat %s for device %s", messageID, chatJID, deviceID)
+	}
+	return nil
+}
+
 func (r *SQLiteRepository) StoreMessagesBatch(messages []*domainChatStorage.Message) error {
 	if len(messages) == 0 {
 		return nil
@@ -584,41 +650,30 @@ func (r *SQLiteRepository) GetMessages(filter *domainChatStorage.MessageFilter) 
 		return nil, fmt.Errorf("device_id is required for message queries (data isolation)")
 	}
 
-	var conditions []string
-	var args []any
+	query := selectChatMessages
+	args := []any{filter.DeviceID, filter.ChatJID}
 
-	conditions = append(conditions, "chat_jid = ?")
-	args = append(args, filter.ChatJID)
-
-	// Filter by device_id to ensure data isolation between devices
-	conditions = append(conditions, "device_id = ?")
-	args = append(args, filter.DeviceID)
-
+	// Timestamps are stored as UTC text and compared as strings, so bounds must be UTC too.
 	if filter.StartTime != nil {
-		conditions = append(conditions, "timestamp >= ?")
-		args = append(args, *filter.StartTime)
+		query += " AND timestamp >= ?"
+		args = append(args, filter.StartTime.UTC())
 	}
 
 	if filter.EndTime != nil {
-		conditions = append(conditions, "timestamp <= ?")
-		args = append(args, *filter.EndTime)
+		query += " AND timestamp <= ?"
+		args = append(args, filter.EndTime.UTC())
 	}
 
 	if filter.MediaOnly {
-		conditions = append(conditions, "media_type NOT IN ('', 'call')")
+		query += " AND media_type NOT IN ('', 'call')"
 	}
 
 	if filter.IsFromMe != nil {
-		conditions = append(conditions, "is_from_me = ?")
+		query += " AND is_from_me = ?"
 		args = append(args, *filter.IsFromMe)
 	}
 
-	query := `
-		SELECT ` + messageColumns + `
-		FROM messages
-		WHERE ` + strings.Join(conditions, " AND ") + `
-		ORDER BY timestamp DESC
-	`
+	query += " ORDER BY timestamp DESC"
 
 	// Safely add LIMIT and OFFSET using parameterized values
 	if filter.Limit > 0 {
@@ -671,25 +726,9 @@ func (r *SQLiteRepository) SearchMessages(deviceID, chatJID, searchText string, 
 		return []*domainChatStorage.Message{}, nil
 	}
 
-	var conditions []string
-	var args []any
-
-	conditions = append(conditions, "chat_jid = ?")
-	args = append(args, chatJID)
-
-	conditions = append(conditions, "device_id = ?")
-	args = append(args, deviceID)
-
-	// Add search condition using LIKE operator for case-insensitive search
-	conditions = append(conditions, "LOWER(content) LIKE ?")
-	args = append(args, "%"+strings.ToLower(searchText)+"%")
-
-	query := `
-		SELECT ` + messageColumns + `
-		FROM messages
-		WHERE ` + strings.Join(conditions, " AND ") + `
-		ORDER BY timestamp DESC
-	`
+	query := selectChatMessages
+	query += " AND LOWER(content) LIKE ? ORDER BY timestamp DESC"
+	args := []any{deviceID, chatJID, "%" + strings.ToLower(searchText) + "%"}
 
 	// Add limit with validation
 	if limit > 0 {
@@ -1090,22 +1129,30 @@ func (r *SQLiteRepository) GetChatwootMessageLinkByWhatsAppID(deviceID, waMessag
 	return link, err
 }
 
-func (r *SQLiteRepository) GetChatwootMessageLinkByChatwootID(deviceID string, chatwootMessageID int) (*domainChatStorage.ChatwootMessageLink, error) {
-	query := `
+func (r *SQLiteRepository) ListChatwootMessageLinksByChatwootID(deviceID string, chatwootMessageID int) ([]*domainChatStorage.ChatwootMessageLink, error) {
+	rows, err := r.db.Query(`
 		SELECT device_id, wa_message_id, wa_chat_jid, chatwoot_message_id,
 			chatwoot_conversation_id, chatwoot_inbox_id,
 			chatwoot_contact_inbox_source_id, source_id, direction,
 			is_read, created_at, updated_at, chatwoot_config_id, chatwoot_account_id
 		FROM chatwoot_message_links
 		WHERE device_id = ? AND chatwoot_message_id = ?
-		LIMIT 1
-	`
-
-	link, err := r.scanChatwootMessageLink(r.db.QueryRow(query, deviceID, chatwootMessageID))
-	if err == sql.ErrNoRows {
-		return nil, nil
+		ORDER BY created_at, rowid
+	`, deviceID, chatwootMessageID)
+	if err != nil {
+		return nil, err
 	}
-	return link, err
+	defer rows.Close()
+
+	links := []*domainChatStorage.ChatwootMessageLink{}
+	for rows.Next() {
+		link, err := r.scanChatwootMessageLink(rows)
+		if err != nil {
+			return nil, err
+		}
+		links = append(links, link)
+	}
+	return links, rows.Err()
 }
 
 // GetChatwootMessageLinkForReply applies the whole scope before LIMIT 1, so a
@@ -1261,6 +1308,30 @@ func (r *SQLiteRepository) GetLatestUnreadChatwootMessageLinkByChat(deviceID, wa
 	return link, err
 }
 
+// GetLatestOutgoingChatwootMessageLinkByChat finds a delivered Chatwoot reply.
+func (r *SQLiteRepository) GetLatestOutgoingChatwootMessageLinkByChat(deviceID, waChatJID string, configID int64, accountID, inboxID int) (*domainChatStorage.ChatwootMessageLink, error) {
+	// WAID: identifies messages mirrored or imported from WhatsApp, not
+	// Chatwoot-originated sends. The outbound webhook rejects those echoes.
+	query := `
+		SELECT device_id, wa_message_id, wa_chat_jid, chatwoot_message_id,
+			chatwoot_conversation_id, chatwoot_inbox_id,
+			chatwoot_contact_inbox_source_id, source_id, direction,
+			is_read, created_at, updated_at, chatwoot_config_id, chatwoot_account_id
+		FROM chatwoot_message_links
+		WHERE device_id = ? AND wa_chat_jid = ? AND direction = 'outgoing'
+			AND chatwoot_config_id = ? AND chatwoot_account_id = ? AND chatwoot_inbox_id = ?
+			AND chatwoot_message_id > 0 AND chatwoot_conversation_id > 0
+			AND source_id NOT GLOB 'WAID:*'
+		ORDER BY created_at DESC, wa_message_id DESC
+		LIMIT 1
+	`
+	link, err := r.scanChatwootMessageLink(r.db.QueryRow(query, deviceID, waChatJID, configID, accountID, inboxID))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return link, err
+}
+
 func (r *SQLiteRepository) EnqueueChatwootForwardEvent(event *domainChatStorage.ChatwootForwardEvent) error {
 	if event == nil || strings.TrimSpace(event.DeviceID) == "" || strings.TrimSpace(event.EventName) == "" || strings.TrimSpace(event.WhatsAppMessageID) == "" || strings.TrimSpace(event.PayloadJSON) == "" {
 		return fmt.Errorf("chatwoot forward event requires device id, event name, whatsapp message id, and payload")
@@ -1353,6 +1424,12 @@ func (r *SQLiteRepository) getCount(query string, args ...any) (int64, error) {
 	err := r.db.QueryRow(query, args...).Scan(&count)
 	return count, err
 }
+
+// Device-scoped list queries share scanMessage's column order.
+const selectDeviceMessages = `SELECT ` + messageColumns + `
+	FROM messages WHERE device_id = ?`
+
+const selectChatMessages = selectDeviceMessages + " AND chat_jid = ?"
 
 // scanMessage is a private helper for scanning message rows
 func (r *SQLiteRepository) scanMessage(scanner interface{ Scan(...any) error }) (*domainChatStorage.Message, error) {
@@ -2226,6 +2303,10 @@ func (r *SQLiteRepository) GetDeviceWebhookConfig(ctx context.Context, deviceID 
 
 // GetChatNameWithPushName determines the appropriate name for a chat with pushname support
 func (r *SQLiteRepository) GetChatNameWithPushName(jid types.JID, chatJID string, senderUser string, pushName string) string {
+	// A participant's push name must never be used as the group's subject.
+	if jid.Server == types.GroupServer {
+		return fmt.Sprintf("Group %s", jid.User)
+	}
 	// First, check if chat already exists with a name
 	existingChat, err := r.GetChat(chatJID)
 	if err == nil && existingChat != nil && existingChat.Name != "" {
@@ -2240,10 +2321,6 @@ func (r *SQLiteRepository) GetChatNameWithPushName(jid types.JID, chatJID string
 	var name string
 
 	switch jid.Server {
-	case "g.us":
-		// This is a group chat
-		// For now, use a generic name - this can be enhanced later with group info
-		name = fmt.Sprintf("Group %s", jid.User)
 	case "newsletter":
 		// This is a newsletter/channel
 		name = fmt.Sprintf("Newsletter %s", jid.User)
@@ -2268,6 +2345,12 @@ func (r *SQLiteRepository) GetChatNameWithPushNameByDevice(deviceID string, jid 
 	if chatJID == "status@broadcast" || jid.String() == "status@broadcast" {
 		return "Status"
 	}
+	if jid.Server == types.GroupServer {
+		if existing, err := r.GetChatByDevice(deviceID, chatJID); err == nil && existing != nil && existing.Name != "" {
+			return existing.Name
+		}
+		return fmt.Sprintf("Group %s", jid.User)
+	}
 
 	// First, check if chat already exists with a name (device-scoped!)
 	existingChat, err := r.GetChatByDevice(deviceID, chatJID)
@@ -2283,10 +2366,6 @@ func (r *SQLiteRepository) GetChatNameWithPushNameByDevice(deviceID string, jid 
 	var name string
 
 	switch jid.Server {
-	case "g.us":
-		// This is a group chat
-		// For now, use a generic name - this can be enhanced later with group info
-		name = fmt.Sprintf("Group %s", jid.User)
 	case "newsletter":
 		// This is a newsletter/channel
 		name = fmt.Sprintf("Newsletter %s", jid.User)
@@ -2361,7 +2440,7 @@ func (r *SQLiteRepository) CreateMessage(ctx context.Context, evt *events.Messag
 				Name:            chatName,
 				LastMessageTime: evt.Info.Timestamp,
 			}
-			if err := r.StoreChat(chat); err != nil {
+			if err := whatsapp.StoreChatWithGroupSubject(ctx, r, chat); err != nil {
 				return fmt.Errorf("failed to store chat for edited message: %w", err)
 			}
 		}
@@ -2394,7 +2473,7 @@ func (r *SQLiteRepository) CreateMessage(ctx context.Context, evt *events.Messag
 	}
 
 	// Store or update the chat
-	if err := r.StoreChat(chat); err != nil {
+	if err := whatsapp.StoreChatWithGroupSubject(ctx, r, chat); err != nil {
 		return fmt.Errorf("failed to store chat: %w", err)
 	}
 
@@ -2850,7 +2929,7 @@ func (r *SQLiteRepository) CreateIncomingCallRecord(ctx context.Context, evt *ev
 	if existingChat != nil {
 		chat.Archived = existingChat.Archived
 	}
-	if err := r.StoreChat(chat); err != nil {
+	if err := whatsapp.StoreChatWithGroupSubject(ctx, r, chat); err != nil {
 		return fmt.Errorf("failed to store chat for call: %w", err)
 	}
 
@@ -2889,6 +2968,64 @@ func (r *SQLiteRepository) CreateIncomingCallRecord(ctx context.Context, evt *ev
 		CallMetadata: string(metaBytes),
 	}
 	return r.StoreMessage(message)
+}
+
+// GetCallRecords retrieves stored call records (synthetic messages with
+// media_type "call") newest first, together with the unpaginated total.
+func (r *SQLiteRepository) GetCallRecords(filter *domainChatStorage.CallRecordFilter) ([]*domainChatStorage.Message, int64, error) {
+	if filter == nil || filter.DeviceID == "" {
+		return nil, 0, fmt.Errorf("device_id is required for call record queries (data isolation)")
+	}
+
+	const callScope = " AND media_type = 'call'"
+	const chatFilter = " AND chat_jid IN (SELECT value FROM json_each(?))"
+	const countDeviceCalls = "SELECT COUNT(*) FROM messages WHERE device_id = ?" + callScope
+	const selectDeviceCalls = selectDeviceMessages + callScope
+	countQuery, query := countDeviceCalls, selectDeviceCalls
+	args := []any{filter.DeviceID}
+	if len(filter.ChatJIDs) > 0 {
+		// Bind the alias list as one parameter, keeping the indexed chat_jid predicate.
+		jids, err := json.Marshal(filter.ChatJIDs)
+		if err != nil {
+			return nil, 0, err
+		}
+		countQuery += chatFilter
+		query += chatFilter
+		args = append(args, string(jids))
+	}
+
+	total, err := r.getCount(countQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	query += " ORDER BY timestamp DESC, id DESC"
+	if filter.Limit > 0 {
+		filter.Limit = min(filter.Limit, 1000)
+		query += " LIMIT ? OFFSET ?"
+		args = append(args, filter.Limit, max(filter.Offset, 0))
+	}
+
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var messages []*domainChatStorage.Message
+	for rows.Next() {
+		message, err := r.scanMessage(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		messages = append(messages, message)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return messages, total, nil
 }
 
 // GetStorageStatistics returns current storage statistics for logging purposes
@@ -3044,7 +3181,7 @@ func (r *SQLiteRepository) StoreSentMessageWithContext(ctx context.Context, mess
 	if existingChat != nil {
 		chat.Archived = existingChat.Archived
 	}
-	if err := r.StoreChat(chat); err != nil {
+	if err := whatsapp.StoreChatWithGroupSubject(ctx, r, chat); err != nil {
 		return fmt.Errorf("failed to store chat: %w", err)
 	}
 

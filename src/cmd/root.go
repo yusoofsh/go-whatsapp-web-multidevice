@@ -85,6 +85,60 @@ func init() {
 	})
 }
 
+// loadFullHistoryConfig applies the full-history settings from the environment
+// unless the matching flag was passed, and rejects a limit below 1 instead of
+// falling back to the default.
+func loadFullHistoryConfig(cmd *cobra.Command) error {
+	flags := cmd.PersistentFlags()
+	if !flags.Changed("full-history-sync") && viper.IsSet("whatsapp_full_history_sync") {
+		config.WhatsappFullHistorySync = viper.GetBool("whatsapp_full_history_sync")
+	}
+	if raw := viper.GetString("whatsapp_full_history_days"); raw != "" && !flags.Changed("full-history-days") {
+		days, err := positiveUint32Setting("WHATSAPP_FULL_HISTORY_DAYS", raw)
+		if err != nil {
+			return err
+		}
+		config.WhatsappFullHistoryDays = days
+	}
+	if raw := viper.GetString("whatsapp_full_history_size_mb"); raw != "" {
+		size, err := positiveUint32Setting("WHATSAPP_FULL_HISTORY_SIZE_MB", raw)
+		if err != nil {
+			return err
+		}
+		config.WhatsappFullHistorySizeMB = size
+	}
+	if config.WhatsappFullHistoryDays == 0 {
+		return fmt.Errorf("--full-history-days must be at least 1")
+	}
+	return nil
+}
+
+// loadTimezoneConfig applies APP_TIMEZONE unless --timezone was passed and
+// resolves it, rejecting an unknown zone instead of falling back to UTC.
+func loadTimezoneConfig(cmd *cobra.Command) error {
+	if raw := viper.GetString("app_timezone"); raw != "" && !cmd.PersistentFlags().Changed("timezone") {
+		config.AppTimezone = raw
+	}
+	name := strings.TrimSpace(config.AppTimezone)
+	location, err := time.LoadLocation(name)
+	// "" and "Local" would silently resolve to UTC (init pins time.Local to UTC).
+	// Unset stays "UTC", the default, so only an explicitly blank value is rejected.
+	if err != nil || name == "" || name == "Local" {
+		return fmt.Errorf("invalid timezone %q (APP_TIMEZONE or --timezone): use an IANA name such as Europe/Paris", config.AppTimezone)
+	}
+	config.AppLocation = location
+	return nil
+}
+
+// positiveUint32Setting parses a whole-number setting of at least 1.
+func positiveUint32Setting(name, raw string) (uint32, error) {
+	n, err := strconv.ParseUint(strings.TrimSpace(raw), 10, 32)
+	if err != nil || n == 0 {
+		return 0, fmt.Errorf("%s must be a whole number of at least 1, got %q", name, raw)
+	}
+	return uint32(n), nil
+}
+
 // initEnvConfig loads configuration from environment variables
 func initEnvConfig() {
 	// Configuration includes credentials; never dump it to application logs.
@@ -100,6 +154,12 @@ func initEnvConfig() {
 	}
 	if envOs := viper.GetString("app_os"); envOs != "" {
 		config.AppOs = envOs
+	}
+	if err := loadFullHistoryConfig(rootCmd); err != nil {
+		logrus.Fatal(err)
+	}
+	if err := loadTimezoneConfig(rootCmd); err != nil {
+		logrus.Fatal(err)
 	}
 	if envBasicAuth := viper.GetString("app_basic_auth"); envBasicAuth != "" {
 		credential := strings.Split(envBasicAuth, ",")
@@ -320,11 +380,17 @@ func initEnvConfig() {
 	if viper.IsSet("chatwoot_forward_deletes") {
 		config.ChatwootForwardDeletes = viper.GetBool("chatwoot_forward_deletes")
 	}
+	if envChatwootEvents := viper.GetString("chatwoot_events"); envChatwootEvents != "" && !rootCmd.PersistentFlags().Changed("chatwoot-events") {
+		config.ChatwootEvents = splitCommaTrimmed(envChatwootEvents)
+	}
 	if viper.IsSet("chatwoot_message_read") {
 		config.ChatwootMessageRead = viper.GetBool("chatwoot_message_read")
 	}
 	if viper.IsSet("chatwoot_message_delete") {
 		config.ChatwootMessageDelete = viper.GetBool("chatwoot_message_delete")
+	}
+	if !rootCmd.PersistentFlags().Changed("chatwoot-revoke-on-delete") && viper.IsSet("chatwoot_revoke_on_delete") {
+		config.ChatwootRevokeOnDelete = viper.GetBool("chatwoot_revoke_on_delete")
 	}
 }
 
@@ -367,6 +433,24 @@ func initFlags() {
 		"debug", "d",
 		config.AppDebug,
 		"hide or displaying log with --debug <true/false> | example: --debug=true",
+	)
+	rootCmd.PersistentFlags().BoolVarP(
+		&config.WhatsappFullHistorySync,
+		"full-history-sync", "",
+		config.WhatsappFullHistorySync,
+		`pair as Desktop and ask the phone for the FULL message history (new pairings only) --full-history-sync=<true|false> | example: --full-history-sync=true`,
+	)
+	rootCmd.PersistentFlags().Uint32VarP(
+		&config.WhatsappFullHistoryDays,
+		"full-history-days", "",
+		config.WhatsappFullHistoryDays,
+		`days of history requested when --full-history-sync is on | example: --full-history-days=3650`,
+	)
+	rootCmd.PersistentFlags().StringVarP(
+		&config.AppTimezone,
+		"timezone", "",
+		config.AppTimezone,
+		`IANA timezone for chat, message and newsletter timestamps in REST and MCP responses --timezone <string> | example: --timezone="Europe/Paris"`,
 	)
 	rootCmd.PersistentFlags().StringVarP(
 		&config.AppOs,
@@ -688,6 +772,12 @@ func initFlags() {
 		config.ChatwootForwardEdits,
 		`mirror WhatsApp message edits into the Chatwoot conversation as threaded notes --chatwoot-forward-edits <true/false> | example: --chatwoot-forward-edits=true`,
 	)
+	rootCmd.PersistentFlags().StringSliceVarP(
+		&config.ChatwootEvents,
+		"chatwoot-events", "",
+		config.ChatwootEvents,
+		`whitelist of events to forward to Chatwoot (empty = follow --webhook-events) --chatwoot-events <string> | example: --chatwoot-events="message"`,
+	)
 	rootCmd.PersistentFlags().BoolVarP(
 		&config.ChatwootForwardDeletes,
 		"chatwoot-forward-deletes", "",
@@ -705,6 +795,12 @@ func initFlags() {
 		"chatwoot-message-delete", "",
 		config.ChatwootMessageDelete,
 		`delete linked Chatwoot/WhatsApp messages when deletion is reported by the opposite side --chatwoot-message-delete <true/false> | example: --chatwoot-message-delete=true`,
+	)
+	rootCmd.PersistentFlags().BoolVarP(
+		&config.ChatwootRevokeOnDelete,
+		"chatwoot-revoke-on-delete", "",
+		config.ChatwootRevokeOnDelete,
+		`revoke on WhatsApp the messages deleted in Chatwoot, without deleting in Chatwoot what WhatsApp deletes --chatwoot-revoke-on-delete <true/false> | example: --chatwoot-revoke-on-delete=true`,
 	)
 }
 
@@ -775,7 +871,7 @@ func initApp() {
 
 	// Usecase
 	appUsecase = usecase.NewAppService(chatStorageRepo, dm)
-	callUsecase = usecase.NewCallService()
+	callUsecase = usecase.NewCallService(chatStorageRepo)
 	chatUsecase = usecase.NewChatService(chatStorageRepo)
 	baseSendUsecase := usecase.NewSendService(appUsecase, chatStorageRepo)
 	scheduleService := usecase.NewScheduleService(chatStorageRepo, baseSendUsecase, dm, config.PathStorages)

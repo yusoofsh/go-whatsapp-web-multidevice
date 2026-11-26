@@ -222,7 +222,7 @@ func TestParitySchemasAndDispatch(t *testing.T) {
 	s := newParityTestSuite(t)
 	list := invokeData(t, s.s, s.ctx, "tools/list", map[string]any{})
 	tools := list["result"].(map[string]any)["tools"].([]any)
-	require.Len(t, tools, 11)
+	require.Len(t, tools, 12)
 	names := map[string]bool{}
 	for _, raw := range tools {
 		tool := raw.(map[string]any)

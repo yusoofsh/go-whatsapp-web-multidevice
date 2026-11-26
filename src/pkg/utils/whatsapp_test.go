@@ -2,12 +2,45 @@ package utils
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
+	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"google.golang.org/protobuf/proto"
 )
+
+func TestMediaErrorForLogOmitsDescriptivePaths(t *testing.T) {
+	const descriptivePath = "/tmp/private-invoice.pdf"
+	tests := []struct {
+		err  error
+		want string
+	}{
+		{
+			fmt.Errorf("open attachment %s: %w", descriptivePath, &os.PathError{Op: "open", Path: descriptivePath, Err: os.ErrNotExist}),
+			"open: " + os.ErrNotExist.Error(),
+		},
+		{
+			&os.LinkError{Op: "rename", Old: "/tmp/.download-123", New: descriptivePath, Err: os.ErrPermission},
+			"rename: " + os.ErrPermission.Error(),
+		},
+		{whatsmeow.ErrMediaDownloadFailedWith404, whatsmeow.ErrMediaDownloadFailedWith404.Error()},
+	}
+	for _, tt := range tests {
+		if got := MediaErrorForLog(tt.err).Error(); got != tt.want {
+			t.Errorf("MediaErrorForLog(%v) = %q, want %q", tt.err, got, tt.want)
+		}
+	}
+}
 
 func TestDetermineMediaExtension(t *testing.T) {
 	tests := []struct {
@@ -47,6 +80,11 @@ func TestDetermineMediaExtension(t *testing.T) {
 			wantSuffix: ".oga",
 		},
 		{
+			name:       "AMRWideband",
+			mimeType:   "audio/amr-wb",
+			wantSuffix: ".awb",
+		},
+		{
 			name:       "ExeFromFilename",
 			filename:   "installer.exe",
 			mimeType:   "application/octet-stream",
@@ -59,6 +97,250 @@ func TestDetermineMediaExtension(t *testing.T) {
 			got := determineMediaExtension(tt.filename, tt.mimeType)
 			if got != tt.wantSuffix {
 				t.Fatalf("determineMediaExtension() = %q, want %q", got, tt.wantSuffix)
+			}
+		})
+	}
+}
+
+func TestSanitizeFilenameComponent(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "PlainName",
+			input: "invoice.pdf",
+			want:  "invoice.pdf",
+		},
+		{
+			name:  "SpacesAndParens",
+			input: "Invoice Final (copy).pdf",
+			want:  "Invoice_Final_copy_.pdf",
+		},
+		{
+			name:  "PathTraversalUnix",
+			input: "../../etc/passwd",
+			want:  "passwd",
+		},
+		{
+			name: "PathTraversalWindowsSeparator",
+			// Backslash isn't a path separator on this platform, so
+			// filepath.Base leaves it in place; the character allowlist
+			// still neutralizes it (replaced with "_") rather than letting
+			// it ride through into the generated path unescaped.
+			input: `..\..\secrets.txt`,
+			want:  "_.._secrets.txt",
+		},
+		{
+			name:  "DotDotOnly",
+			input: "..",
+			want:  "file",
+		},
+		{
+			name:  "EmptyAfterSanitizing",
+			input: "...",
+			want:  "file",
+		},
+		{
+			name:  "LeadingDotsStripped",
+			input: "...hidden.pdf",
+			want:  "hidden.pdf",
+		},
+		{
+			name:  "NonASCIILettersKept",
+			input: "合同 relatório.pdf",
+			want:  "合同_relatório.pdf",
+		},
+		{
+			name:  "BidiOverrideReplaced",
+			input: "invoice\u202Efdp.exe",
+			want:  "invoice_fdp.exe",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeFilenameComponent(tt.input)
+			if got != tt.want {
+				t.Fatalf("sanitizeFilenameComponent(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeFilenameComponentCapsLength(t *testing.T) {
+	// A name far longer than any real filesystem allows for a single path
+	// component must be truncated, keeping the extension intact.
+	longName := strings.Repeat("a", 300) + ".pdf"
+	got := sanitizeFilenameComponent(longName)
+	if len(got) > 100 {
+		t.Fatalf("sanitizeFilenameComponent() len = %d, want <= 100", len(got))
+	}
+	if !strings.HasSuffix(got, ".pdf") {
+		t.Fatalf("sanitizeFilenameComponent() = %q, want suffix .pdf", got)
+	}
+}
+
+func TestSanitizeFilenameComponentTruncatesOnRuneBoundary(t *testing.T) {
+	// The leading "a" puts both byte cuts in the middle of a two-byte "é".
+	got := sanitizeFilenameComponent("a" + strings.Repeat("é", 300) + ".pdf")
+	if len(got) > 100 || !utf8.ValidString(got) || !strings.HasSuffix(got, ".pdf") {
+		t.Fatalf("got %q (len %d), want valid UTF-8 within 100 bytes ending in .pdf", got, len(got))
+	}
+	got = mediaStorageName("a"+strings.Repeat("é", 49)+".x", ".pdf")
+	if len(got) > 100 || !utf8.ValidString(got) || !strings.HasSuffix(got, ".pdf") {
+		t.Fatalf("mediaStorageName = %q (len %d), want valid UTF-8 within 100 bytes ending in .pdf", got, len(got))
+	}
+}
+
+func TestMediaStorageNameKeepsResolvedExtension(t *testing.T) {
+	tests := []struct {
+		displayName, extension, want string
+	}{
+		{"report.pdf", ".pdf", "report.pdf"},
+		{"Report.PDF", ".pdf", "Report.PDF"},
+		{".pdf", ".pdf", "pdf.pdf"},                // leading dot stripped by sanitizing
+		{"clip.mp4(1)", ".mp4", "clip.mp4_1_.mp4"}, // unsafe suffix mangled by sanitizing
+		{"../../etc/passwd", ".bin", "passwd.bin"}, // traversal stripped, extension restored
+		{"notes", "", "notes"},                     // nothing to restore
+	}
+	for _, tt := range tests {
+		if got := mediaStorageName(tt.displayName, tt.extension); got != tt.want {
+			t.Errorf("mediaStorageName(%q, %q) = %q, want %q", tt.displayName, tt.extension, got, tt.want)
+		}
+	}
+}
+
+func TestMediaStorageNameStaysWithinLimit(t *testing.T) {
+	got := mediaStorageName("a."+strings.Repeat("x", 150), ".pdf")
+	if len(got) > 100 {
+		t.Fatalf("len = %d, want <= 100 (%q)", len(got), got)
+	}
+	if !strings.HasSuffix(got, ".pdf") {
+		t.Fatalf("expected .pdf suffix, got %q", got)
+	}
+}
+
+func TestStorageExtension(t *testing.T) {
+	tests := []struct {
+		name, originalFilename, mimeType, want string
+	}{
+		{"sender extension", "report.PDF", "application/pdf", ".PDF"},
+		{"no sender name", "", "application/pdf", ".pdf"},
+		{"unsafe sender suffix falls back to MIME", "report.pdf(1)", "application/pdf", ".pdf"},
+		{"overlong sender suffix falls back to MIME", "a." + strings.Repeat("x", 150), "application/pdf", ".pdf"},
+		{"nothing safe", "a.b c", "application/x-what ever", ""},
+		{"mp3 audio without a MIME database entry", "", "audio/mpeg", ".mp3"},
+		{"m4a audio is not video", "", "audio/mp4; codecs=mp4a.40.2", ".m4a"},
+	}
+	for _, tt := range tests {
+		if got := StorageExtension(tt.originalFilename, tt.mimeType); got != tt.want {
+			t.Errorf("%s: StorageExtension(%q, %q) = %q, want %q", tt.name, tt.originalFilename, tt.mimeType, got, tt.want)
+		}
+	}
+}
+
+func TestStoredMediaDisplayName(t *testing.T) {
+	tests := map[string]string{
+		"statics/media/1730000000-5f2b1c7e-8d3a-4b6e-9f10-2c4d6e8a0b1c-Invoice_Final.pdf": "Invoice_Final.pdf",
+		// Files stored before display names were added have no name to show.
+		"statics/media/1730000000-5f2b1c7e-8d3a-4b6e-9f10-2c4d6e8a0b1c.pdf": "",
+		"/tmp/chatwoot-sync-38210497.oga":                                   "",
+	}
+	for path, want := range tests {
+		if got := StoredMediaDisplayName(path); got != want {
+			t.Errorf("StoredMediaDisplayName(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestStorageExtensionChecksEveryMIMEExtension(t *testing.T) {
+	// A test-only type, so the result does not depend on the host MIME database.
+	// mime.AddExtensionType is process-wide and cannot be undone; no other code
+	// uses this type or these extensions.
+	const mimeType = "application/x-gowa-test-archive"
+	for _, ext := range []string{".gowa.tst", ".gtst"} {
+		if err := mime.AddExtensionType(ext, mimeType); err != nil {
+			t.Fatalf("AddExtensionType(%q): %v", ext, err)
+		}
+	}
+	if exts, _ := mime.ExtensionsByType(mimeType); len(exts) != 2 || exts[0] != ".gowa.tst" {
+		t.Fatalf("precondition: want the compound extension listed first, got %v", exts)
+	}
+
+	tests := []struct {
+		name, originalFilename, mimeType string
+	}{
+		{"no sender name", "", mimeType},
+		{"MIME parameters", "", mimeType + "; charset=binary"},
+		{"unsafe sender suffix", "archive.bad ext", mimeType},
+	}
+	for _, tt := range tests {
+		if got := StorageExtension(tt.originalFilename, tt.mimeType); got != ".gtst" {
+			t.Errorf("%s: StorageExtension(%q, %q) = %q, want %q", tt.name, tt.originalFilename, tt.mimeType, got, ".gtst")
+		}
+	}
+}
+
+func TestMediaDisplayName(t *testing.T) {
+	tests := []struct {
+		name             string
+		originalFilename string
+		mediaKind        string
+		caption          string
+		extension        string
+		wantSuffix       string
+		wantNotContain   string
+	}{
+		{
+			// The regression this test guards: a document whose sender-supplied
+			// filename has no extension must still end up with the resolved one,
+			// otherwise Chatwoot renders it as application/octet-stream.
+			name:             "ExtensionlessDocumentGetsExtension",
+			originalFilename: "report",
+			mediaKind:        "document",
+			extension:        ".pdf",
+			wantSuffix:       "report.pdf",
+		},
+		{
+			name:             "DocumentWithExtensionNotDoubled",
+			originalFilename: "invoice.pdf",
+			mediaKind:        "document",
+			extension:        ".pdf",
+			wantSuffix:       "invoice.pdf",
+			wantNotContain:   ".pdf.pdf",
+		},
+		{
+			name:             "MalformedSuffixKeepsResolvedExtension",
+			originalFilename: "invoice.pdf(1)",
+			mediaKind:        "document",
+			extension:        ".pdf",
+			wantSuffix:       "invoice.pdf(1).pdf",
+		},
+		{
+			name:             "MatchingUppercaseExtensionNotDoubled",
+			originalFilename: "invoice.PDF",
+			mediaKind:        "document",
+			extension:        ".pdf",
+			wantSuffix:       "invoice.PDF",
+		},
+		{
+			name:       "GeneratedNameStillCarriesExtension",
+			mediaKind:  "image",
+			extension:  ".jpg",
+			wantSuffix: ".jpg",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mediaDisplayName(tt.originalFilename, tt.mediaKind, tt.caption, tt.extension)
+			if !strings.HasSuffix(got, tt.wantSuffix) {
+				t.Fatalf("mediaDisplayName() = %q, want suffix %q", got, tt.wantSuffix)
+			}
+			if tt.wantNotContain != "" && strings.Contains(got, tt.wantNotContain) {
+				t.Fatalf("mediaDisplayName() = %q, must not contain %q", got, tt.wantNotContain)
 			}
 		})
 	}
@@ -381,6 +663,279 @@ func TestExtractMediaInfoIncludesDirectPath(t *testing.T) {
 				t.Fatalf("fileLength = %d, want %d", gotFileLength, fileLength)
 			}
 		})
+	}
+}
+
+func TestBuildDownloadableMessageSetsMimetype(t *testing.T) {
+	tests := []struct {
+		name      string
+		mediaType string
+		filename  string
+		wantMime  string
+	}{
+		{name: "Image", mediaType: "image", filename: "image_20260101_120000_caption.jpg", wantMime: "image/jpeg"},
+		{name: "Video", mediaType: "video", filename: "video_20260101_120000.mp4", wantMime: "video/mp4"},
+		{name: "VideoNote", mediaType: "video_note", filename: "video_note_20260101_120000.mp4", wantMime: "video/mp4"},
+		{name: "Audio", mediaType: "audio", filename: "audio_20260101_120000.ogg", wantMime: ""},
+		{name: "PTT", mediaType: "ptt", filename: "audio_20260101_120000.ogg", wantMime: ""},
+		{name: "Sticker", mediaType: "sticker", filename: "", wantMime: "image/webp"},
+		{name: "Document", mediaType: "document", filename: "report.pdf", wantMime: "application/pdf"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := BuildDownloadableMessage(tt.mediaType, "https://mmg.whatsapp.net/ignored", "/v/t62/media.enc", tt.filename, []byte("k"), []byte("s"), []byte("e"), 1)
+			if err != nil {
+				t.Fatalf("BuildDownloadableMessage() error = %v", err)
+			}
+			withMime, ok := got.(interface{ GetMimetype() string })
+			if !ok {
+				t.Fatalf("message type %T has no mimetype", got)
+			}
+			if withMime.GetMimetype() != tt.wantMime {
+				t.Fatalf("mimetype = %q, want %q", withMime.GetMimetype(), tt.wantMime)
+			}
+			if tt.wantMime == "" {
+				return
+			}
+			originalFilename := ""
+			if tt.mediaType == "document" {
+				originalFilename = tt.filename
+			}
+			if ext := determineMediaExtension(originalFilename, withMime.GetMimetype()); ext == "" {
+				t.Fatalf("determineMediaExtension() = %q, want a file extension", ext)
+			}
+		})
+	}
+}
+
+func TestStoredAudioDownloadPreservesFormat(t *testing.T) {
+	mp3WithoutID3, err := os.ReadFile("testdata/no-id3.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name     string
+		mimeType string
+		ptt      bool
+		data     []byte
+		wantMime string
+	}{
+		{"voice note", "audio/ogg; codecs=opus", true, []byte("OggS\x00\x02voice-note-OpusHead"), "audio/ogg"},
+		{"ogg audio", "audio/ogg", false, []byte("OggS\x00\x02audio-OpusHead"), "audio/ogg"},
+		{"mp3 audio", "audio/mpeg", false, []byte("ID3\x04\x00\x00\x00\x00\x00\x00"), "audio/mpeg"},
+		{"mp3 without id3", "audio/mpeg", false, mp3WithoutID3, "audio/mpeg"},
+		{"wav audio", "audio/wav", false, []byte("RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00"), "audio/wave"},
+		{"mp4 audio", "audio/mp4", false, []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'M', '4', 'A', ' ', 0, 0, 0, 0, 'i', 's', 'o', 'm', 'm', 'p', '4', '2'}, "audio/mp4"},
+		{"aac adts", "audio/aac", false, []byte{0xff, 0xf1, 0x50, 0x80, 0x01, 0x3f, 0xfc, 0, 0}, "audio/aac"},
+		{"aac mpeg2 adts", "audio/aac", false, []byte{0xff, 0xf9, 0x50, 0x80, 0x01, 0x3f, 0xfc, 0, 0}, "audio/aac"},
+		{"aac adts with crc", "audio/aac", false, []byte{0xff, 0xf0, 0x50, 0x80, 0x01, 0x7f, 0xfc, 0, 0, 0, 0}, "audio/aac"},
+		{"amr", "audio/amr", false, []byte("#!AMR\n\x3c\x00\x00"), "audio/amr"},
+		{"amr wideband", "audio/amr-wb", false, []byte("#!AMR-WB\n\x3c\x00\x00"), "audio/amr-wb"},
+		{"truncated adts", "audio/aac", false, []byte{0xff, 0xf1, 0x50}, "application/octet-stream"},
+		{"truncated adts frame", "audio/aac", false, []byte{0xff, 0xf1, 0x50, 0x80, 0x01, 0x3f, 0xfc, 0}, "application/octet-stream"},
+		{"missing adts crc", "audio/aac", false, []byte{0xff, 0xf0, 0x50, 0x80, 0x00, 0xff, 0xfc}, "application/octet-stream"},
+		{"invalid adts layer", "audio/aac", false, []byte{0xff, 0xf7, 0x50, 0x80, 0x01, 0x3f, 0xfc, 0, 0}, "application/octet-stream"},
+		{"invalid adts sample rate", "audio/aac", false, []byte{0xff, 0xf1, 0x7c, 0x80, 0x01, 0x3f, 0xfc, 0, 0}, "application/octet-stream"},
+		{"invalid adts frame length", "audio/aac", false, []byte{0xff, 0xf1, 0x50, 0x80, 0x00, 0x3f, 0xfc, 0, 0}, "application/octet-stream"},
+		{"unknown audio", "audio/aac", false, []byte{0, 1, 2, 3}, "application/octet-stream"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			original := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+				Mimetype: proto.String(tt.mimeType), PTT: proto.Bool(tt.ptt),
+				DirectPath: proto.String("/audio.enc"), FileLength: proto.Uint64(uint64(len(tt.data))),
+			}}
+			mediaType, filename, mediaURL, directPath, key, hash, encHash, length := ExtractMediaInfo(original)
+			if mediaType != "audio" || filepath.Ext(filename) != ".ogg" {
+				t.Fatalf("stored audio metadata = %q, %q; expected the legacy audio/.ogg representation", mediaType, filename)
+			}
+			rebuilt, err := BuildDownloadableMessage(mediaType, mediaURL, directPath, filename, key, hash, encHash, length)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := storeExtractedMedia(t.TempDir(), rebuilt, tt.data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.MimeType != tt.wantMime {
+				t.Errorf("download MIME = %q, want %q", got.MimeType, tt.wantMime)
+			}
+			ext := filepath.Ext(got.MediaPath)
+			if ext == "" || ext != determineMediaExtension("", tt.wantMime) {
+				t.Errorf("download extension = %q, want one derived from %q", ext, tt.wantMime)
+			}
+			data, err := os.ReadFile(got.MediaPath)
+			if err != nil || !bytes.Equal(data, tt.data) {
+				t.Fatalf("download changed audio bytes: %v", err)
+			}
+			forwarded, err := BuildForwardMessageFromStorage(&domainChatStorage.Message{
+				MediaType: mediaType, Filename: filename,
+			}, ForwardBuildOptions{
+				MimeType: got.MimeType,
+				Upload:   &whatsmeow.UploadResponse{FileLength: length},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if mimeType := forwarded.GetAudioMessage().GetMimetype(); mimeType != tt.wantMime {
+				t.Errorf("reuploaded audio MIME = %q, want %q", mimeType, tt.wantMime)
+			}
+		})
+	}
+}
+
+func TestAudioDownloadPreservesDeclaredMIME(t *testing.T) {
+	for _, mimeType := range []string{"audio/ogg; codecs=opus", "audio/aac", "audio/amr", "audio/amr-wb", "audio/mpeg"} {
+		t.Run(mimeType, func(t *testing.T) {
+			data := []byte{0, 1, 2, 3}
+			got, err := storeExtractedMedia(t.TempDir(), &waE2E.AudioMessage{Mimetype: proto.String(mimeType)}, data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.MimeType != mimeType {
+				t.Fatalf("download MIME = %q, want declared MIME %q", got.MimeType, mimeType)
+			}
+		})
+	}
+}
+
+func TestAudioDownloadMP3FrameValidation(t *testing.T) {
+	mp3, err := os.ReadFile("testdata/no-id3.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutate := func(offset int, value byte) []byte {
+		data := bytes.Clone(mp3)
+		data[offset] = value
+		return data
+	}
+	// FFprobe reports the first audio packet at offset 192 with a size of 192 bytes.
+	singleFrame := mp3[192:384]
+	id3v1 := make([]byte, 128)
+	copy(id3v1, "TAG")
+	tests := []struct {
+		name     string
+		data     []byte
+		wantMime string
+	}{
+		{"single frame", singleFrame, "audio/mpeg"},
+		{"single frame with id3v1", append(bytes.Clone(singleFrame), id3v1...), "audio/mpeg"},
+		{"truncated header", mp3[:3], "application/octet-stream"},
+		{"truncated first frame", mp3[:191], "application/octet-stream"},
+		{"truncated next header", mp3[:195], "application/octet-stream"},
+		{"truncated next frame", mp3[:383], "application/octet-stream"},
+		{"invalid sync", mutate(0, 0xfe), "application/octet-stream"},
+		{"reserved version", mutate(1, 0xeb), "application/octet-stream"},
+		{"reserved layer", mutate(1, 0xf9), "application/octet-stream"},
+		{"free bitrate", mutate(2, 0x04), "application/octet-stream"},
+		{"reserved bitrate", mutate(2, 0xf4), "application/octet-stream"},
+		{"reserved sample rate", mutate(2, 0x5c), "application/octet-stream"},
+		{"reserved emphasis", mutate(3, 0xc2), "application/octet-stream"},
+		{"invalid next sync", mutate(192, 0), "application/octet-stream"},
+		{"reserved next bitrate", mutate(194, 0xf4), "application/octet-stream"},
+		{"different next version", mutate(193, 0xf3), "application/octet-stream"},
+		{"different next sample rate", mutate(194, 0x50), "application/octet-stream"},
+		{"truncated id3v1", append(bytes.Clone(singleFrame), id3v1[:127]...), "application/octet-stream"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := storeExtractedMedia(t.TempDir(), &waE2E.AudioMessage{}, tt.data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.MimeType != tt.wantMime {
+				t.Errorf("download MIME = %q, want %q", got.MimeType, tt.wantMime)
+			}
+		})
+	}
+}
+
+// A document announced above the cap is refused before any download, so it is
+// never fetched just to be rejected, and nothing is left on disk.
+func TestExtractMediaRefusesAnnouncedOversizeBeforeDownload(t *testing.T) {
+	dir := t.TempDir()
+	doc := &waE2E.DocumentMessage{FileLength: proto.Uint64(2 << 30), DirectPath: proto.String("/v/doc")}
+
+	// A nil client would fail any download with ErrClientIsNil.
+	_, err := ExtractMedia(context.Background(), nil, dir, doc)
+	if err == nil || !strings.Contains(err.Error(), "exceeds the maximum limit") {
+		t.Fatalf("ExtractMedia error = %v, want the size limit error", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("storage dir has %d entries, want none", len(entries))
+	}
+}
+
+// A failed download must not leave its partial file behind.
+func TestExtractMediaRemovesPartialFileOnDownloadFailure(t *testing.T) {
+	dir := t.TempDir()
+	doc := &waE2E.DocumentMessage{FileLength: proto.Uint64(10), DirectPath: proto.String("/v/doc")}
+
+	_, err := ExtractMedia(context.Background(), nil, dir, doc)
+	if !errors.Is(err, whatsmeow.ErrClientIsNil) {
+		t.Fatalf("ExtractMedia error = %v, want ErrClientIsNil", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("storage dir has %d entries, want none", len(entries))
+	}
+}
+
+// whatsmeow retries a download, on the same host or the next one, by copying
+// into the same file again. A partial first attempt must not stay in front of
+// the second attempt's bytes.
+func TestDownloadFileStartsEachAttemptEmpty(t *testing.T) {
+	file, err := os.CreateTemp(t.TempDir(), "download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	f := downloadFile{file}
+
+	// The same io.Copy shape as whatsmeow: a TeeReader source, so the copy
+	// goes through the destination's ReadFrom.
+	for _, attempt := range []string{"partial bytes from the first host", "second"} {
+		if _, err := io.Copy(f, io.TeeReader(strings.NewReader(attempt), io.Discard)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := os.ReadFile(file.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "second" {
+		t.Fatalf("file = %q, want only the last attempt %q", got, "second")
+	}
+	if _, isOSFile := any(f).(*os.File); isOSFile {
+		t.Fatal("downloadFile must not be an *os.File, or whatsmeow preallocates it with fallocate")
+	}
+}
+
+// ExtractMedia sniffs only the first mediaSniffLength bytes of a downloaded
+// file; that must give the same MIME type as the whole file.
+func TestDescribeExtractedMediaSniffsFromHead(t *testing.T) {
+	mp3, err := os.ReadFile("testdata/no-id3.mp3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	long := bytes.Repeat(mp3[:192], mediaSniffLength/192+10)
+	whole := describeExtractedMedia(t.TempDir(), &waE2E.AudioMessage{}, long)
+	head := describeExtractedMedia(t.TempDir(), &waE2E.AudioMessage{}, long[:mediaSniffLength])
+	if whole.MimeType != "audio/mpeg" || head.MimeType != whole.MimeType {
+		t.Fatalf("MIME from head = %q, from whole file = %q; want both audio/mpeg", head.MimeType, whole.MimeType)
+	}
+}
+
+func TestDescribeExtractedMediaUsesDescriptiveStorageName(t *testing.T) {
+	dir := t.TempDir()
+	msg := &waE2E.DocumentMessage{FileName: proto.String("合同.pdf(1)"), Mimetype: proto.String("application/pdf")}
+	first := describeExtractedMedia(dir, msg, nil)
+	second := describeExtractedMedia(dir, msg, nil)
+	if first.MediaPath == second.MediaPath || filepath.Dir(first.MediaPath) != dir {
+		t.Fatalf("want unique paths in %q, got %q and %q", dir, first.MediaPath, second.MediaPath)
+	}
+	if got := StoredMediaDisplayName(first.MediaPath); got != "合同.pdf_1_.pdf" {
+		t.Errorf("display name from %q = %q, want 合同.pdf_1_.pdf", first.MediaPath, got)
 	}
 }
 
@@ -707,6 +1262,34 @@ func TestBuildForwardMessageFromStorageDocument(t *testing.T) {
 	}
 }
 
+func TestBuildForwardMessageFromStorageReuploadedAudioMIME(t *testing.T) {
+	for _, tt := range []struct {
+		name, mediaType, mimeType, wantMime string
+	}{
+		{"PTT Ogg", "ptt", "audio/ogg", "audio/ogg; codecs=opus"},
+		{"PTT with codec", "ptt", "audio/ogg; codecs=opus", "audio/ogg; codecs=opus"},
+		{"ordinary Ogg", "audio", "audio/ogg", "audio/ogg"},
+		{"other PTT MIME", "ptt", "audio/mpeg", "audio/mpeg"},
+		{"AAC", "audio", "audio/aac", "audio/aac"},
+		{"AMR", "audio", "audio/amr", "audio/amr"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			msg, err := BuildForwardMessageFromStorage(&domainChatStorage.Message{MediaType: tt.mediaType}, ForwardBuildOptions{
+				Upload: &whatsmeow.UploadResponse{DirectPath: "/reuploaded.enc"}, MimeType: tt.mimeType,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := msg.GetAudioMessage().GetMimetype(); got != tt.wantMime {
+				t.Errorf("re-upload MIME = %q, want %q", got, tt.wantMime)
+			}
+			if got := msg.GetAudioMessage().GetPTT(); got != (tt.mediaType == "ptt") {
+				t.Errorf("PTT = %v, want %v", got, tt.mediaType == "ptt")
+			}
+		})
+	}
+}
+
 func TestBuildForwardMessageFromStorageUnsupportedType(t *testing.T) {
 	_, err := BuildForwardMessageFromStorage(&domainChatStorage.Message{
 		MediaType: "call",
@@ -858,6 +1441,23 @@ func TestExtractContextInfoOtherMessageTypes(t *testing.T) {
 	for name, msg := range tests {
 		if got := ExtractContextInfo(msg).GetStanzaID(); got != "ABC123" {
 			t.Errorf("%s: StanzaID = %q, want %q", name, got, "ABC123")
+		}
+	}
+}
+
+func TestSanitizePhone(t *testing.T) {
+	for in, want := range map[string]string{
+		"628123456789012":         "628123456789012@s.whatsapp.net",  // 15 digits: still a user
+		"+628123456789012":        "+628123456789012@s.whatsapp.net", // + is not counted toward the cutoff
+		"1203630252461254":        "1203630252461254@g.us",           // over 15 digits: group
+		"120363025246125486@g.us": "120363025246125486@g.us",
+		"status@broadcast":        "status@broadcast",
+		"":                        "",
+	} {
+		got := in
+		SanitizePhone(&got)
+		if got != want {
+			t.Errorf("SanitizePhone(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
