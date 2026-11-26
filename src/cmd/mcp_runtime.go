@@ -65,14 +65,21 @@ func startNativeMcpGateway(dm *whatsapp.DeviceManager, oauthServer *mcpoauth.Ser
 	if config.McpStreamPort == config.AppPort {
 		return noop, errors.New("native MCP and Fiber ports must differ")
 	}
-	basic, err := mcpOAuthCredentialValidator(config.AppBasicAuthCredential)
-	if err != nil {
-		return noop, err
+	var basic mcpoauth.CredentialValidator
+	if len(config.AppBasicAuthCredential) > 0 {
+		var err error
+		basic, err = mcpOAuthCredentialValidator(config.AppBasicAuthCredential)
+		if err != nil {
+			return noop, err
+		}
+	}
+	if basic == nil && oauthServer == nil {
+		return noop, errors.New("MCP requires APP_BASIC_AUTH or MCP OAuth")
 	}
 	basicLimiter := newBasicAuthFailureLimiter()
 	authenticate := func(r *http.Request) (string, error) {
 		scheme, _, _, _ := parseBasicAuthorization(r.Header.Get("Authorization"))
-		if scheme == "basic" {
+		if scheme == "basic" && basic != nil {
 			username, valid, err := authenticateNativeBasic(r, basic, basicLimiter, config.AppTrustedProxies)
 			if err != nil {
 				return "", err
@@ -87,11 +94,14 @@ func startNativeMcpGateway(dm *whatsapp.DeviceManager, oauthServer *mcpoauth.Ser
 		if oauthServer != nil {
 			return oauthServer.AuthenticateHTTP(r.Context(), r.Header.Get("Authorization"), basic)
 		}
-		user, password, ok := r.BasicAuth()
-		if !ok || !basic(user, password) {
-			return "", errors.New("invalid credentials")
+		if basic != nil {
+			user, password, ok := r.BasicAuth()
+			if !ok || !basic(user, password) {
+				return "", errors.New("invalid credentials")
+			}
+			return "basic:" + user, nil
 		}
-		return "basic:" + user, nil
+		return "", errors.New("invalid credentials")
 	}
 	challenge := `Basic realm="GOWA MCP"`
 	if oauthServer != nil {

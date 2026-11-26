@@ -76,7 +76,7 @@ func registerMcpOAuth(app *fiber.App, dm *whatsapp.DeviceManager) (*mcpoauth.Ser
 		return nil, false, nil
 	}
 
-	validateCredential, err := mcpOAuthCredentialValidator(config.AppBasicAuthCredential)
+	validateCredential, err := mcpOAuthCredentialValidator(oauthConsentCredentials())
 	if err != nil {
 		return nil, false, err
 	}
@@ -127,6 +127,17 @@ func registerMcpOAuth(app *fiber.App, dm *whatsapp.DeviceManager) (*mcpoauth.Ser
 // REST/UI routes registered later and replaces their normal Basic challenge.
 func useMcpOAuthMiddleware(router fiber.Router, auth fiber.Handler) {
 	router.Use("/mcp", auth)
+}
+
+// oauthConsentCredentials are the accounts accepted on the OAuth consent form.
+// MCP_OAUTH_CONSENT_AUTH lets a deployment run without APP_BASIC_AUTH, for
+// example when an edge proxy such as Cloudflare Access authenticates the web
+// app, while still allowing new MCP OAuth clients to be authorized.
+func oauthConsentCredentials() []string {
+	if len(config.McpOAuthConsentAuth) > 0 {
+		return config.McpOAuthConsentAuth
+	}
+	return config.AppBasicAuthCredential
 }
 
 func mcpOAuthCredentialValidator(credentials []string) (mcpoauth.CredentialValidator, error) {

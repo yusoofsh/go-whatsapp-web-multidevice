@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/aldinokemal/go-whatsapp-web-multidevice/config"
 	"github.com/gofiber/fiber/v3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,4 +59,18 @@ func TestMcpOAuthMiddlewareOnlyProtectsMcpRoute(t *testing.T) {
 			assert.Equal(t, `Basic realm="Restricted", charset="UTF-8"`, faviconResp.Header.Get(fiber.HeaderWWWAuthenticate))
 		})
 	}
+}
+
+func TestOAuthConsentCredentialsPrecedence(t *testing.T) {
+	oldConsent, oldBasic := config.McpOAuthConsentAuth, config.AppBasicAuthCredential
+	t.Cleanup(func() {
+		config.McpOAuthConsentAuth, config.AppBasicAuthCredential = oldConsent, oldBasic
+	})
+
+	config.AppBasicAuthCredential = []string{"admin:basic"}
+	config.McpOAuthConsentAuth = nil
+	assert.Equal(t, []string{"admin:basic"}, oauthConsentCredentials(), "basic auth is the fallback")
+
+	config.McpOAuthConsentAuth = []string{"oauth:consent"}
+	assert.Equal(t, []string{"oauth:consent"}, oauthConsentCredentials(), "dedicated consent credentials win")
 }
