@@ -33,11 +33,12 @@ func dataDevice(ctx context.Context) (string, error) {
 	return d.JID(), nil
 }
 func registerDataTools(s *server.MCPServer, data *mcpstore.Store, resolver deviceResolver) {
-	tool := mcpg.NewTool("whatsapp_media", mcpg.WithDescription("Stage an attachment with action=upload, data_base64, filename, mime_type; then send using whatsapp_send media_id. action=read returns bytes over MCP. Maximum 10 MiB/file, 24-hour expiry, device-scoped. No server paths."), mcpg.WithReadOnlyHintAnnotation(false), mcpg.WithDestructiveHintAnnotation(false), mcpg.WithRawInputSchema(json.RawMessage(`{
+	tool := mcpg.NewTool("whatsapp_media", mcpg.WithDescription("Stage an attachment with action=upload, data_base64, filename, mime_type; then send using whatsapp_send media_id. When one call cannot carry the file, split the raw bytes and send each part with action=upload_chunk, data_base64 (that part alone), index, total, reusing the returned upload_id; then action=upload_finish with upload_id, filename, mime_type returns the media_id. Unfinished parts expire after 1 hour. action=read returns bytes over MCP. Maximum 10 MiB/file, 24-hour expiry, device-scoped. No server paths."), mcpg.WithReadOnlyHintAnnotation(false), mcpg.WithDestructiveHintAnnotation(false), mcpg.WithRawInputSchema(json.RawMessage(`{
  "type":"object","required":["action"],"properties":{
- "action":{"type":"string","enum":["upload","read"]},"device_id":{"type":"string"},
- "data_base64":{"type":"string","maxLength":13981016},"filename":{"type":"string","minLength":1,"maxLength":160},"mime_type":{"type":"string","maxLength":120},"media_id":{"type":"string","maxLength":36},"include_data":{"type":"boolean","description":"Include data_base64 in structuredContent for clients which discard binary content; default false"}},
- "allOf":[{"if":{"properties":{"action":{"const":"upload"}}},"then":{"required":["data_base64","filename","mime_type"]}},{"if":{"properties":{"action":{"const":"read"}}},"then":{"required":["media_id"]}}]}`)))
+ "action":{"type":"string","enum":["upload","upload_chunk","upload_finish","read"]},"device_id":{"type":"string"},
+ "data_base64":{"type":"string","maxLength":13981016},"filename":{"type":"string","minLength":1,"maxLength":160},"mime_type":{"type":"string","maxLength":120},"media_id":{"type":"string","maxLength":36},"include_data":{"type":"boolean","description":"Include data_base64 in structuredContent for clients which discard binary content; default false"},
+ "upload_id":{"type":"string","maxLength":36,"description":"Returned by the first upload_chunk; omit it there to start a new upload"},"index":{"type":"integer","minimum":0,"maximum":63,"description":"Zero-based part number"},"total":{"type":"integer","minimum":1,"maximum":64,"description":"Number of parts; the same on every part"}},
+ "allOf":[{"if":{"properties":{"action":{"const":"upload"}}},"then":{"required":["data_base64","filename","mime_type"]}},{"if":{"properties":{"action":{"const":"upload_chunk"}}},"then":{"required":["data_base64","index","total"]}},{"if":{"properties":{"action":{"const":"upload_finish"}}},"then":{"required":["upload_id","filename","mime_type"]}},{"if":{"properties":{"action":{"const":"read"}}},"then":{"required":["media_id"]}}]}`)))
 	tool.InputSchema = mcpg.ToolInputSchema{}
 	s.AddTool(tool, func(ctx context.Context, r mcpg.CallToolRequest) (*mcpg.CallToolResult, error) {
 		ctx, _, err := resolveDeviceContext(ctx, r, resolver)
@@ -59,6 +60,26 @@ func registerDataTools(s *server.MCPServer, data *mcpstore.Store, resolver devic
 				return mcpg.NewToolResultError("invalid base64 attachment"), nil
 			}
 			m, err := data.Stage(ctx, device, r.GetString("filename", ""), r.GetString("mime_type", ""), raw)
+			if err != nil {
+				return mcpg.NewToolResultError(err.Error()), nil
+			}
+			return mcpg.NewToolResultStructured(m, "Attachment staged; nothing sent to WhatsApp."), nil
+		case "upload_chunk":
+			encoded := r.GetString("data_base64", "")
+			if len(encoded) > base64.StdEncoding.EncodedLen(mcpstore.MaxMediaBytes) {
+				return mcpg.NewToolResultError("attachment exceeds 10 MiB"), nil
+			}
+			raw, err := base64.StdEncoding.Strict().DecodeString(encoded)
+			if err != nil {
+				return mcpg.NewToolResultError("invalid base64 attachment"), nil
+			}
+			p, err := data.StagePart(ctx, device, r.GetString("upload_id", ""), r.GetInt("index", -1), r.GetInt("total", 0), raw)
+			if err != nil {
+				return mcpg.NewToolResultError(err.Error()), nil
+			}
+			return mcpg.NewToolResultStructured(p, fmt.Sprintf("Part %d of %d stored (%d received); nothing sent to WhatsApp.", p.Index+1, p.Total, p.Received)), nil
+		case "upload_finish":
+			m, err := data.FinishUpload(ctx, device, r.GetString("upload_id", ""), r.GetString("filename", ""), r.GetString("mime_type", ""))
 			if err != nil {
 				return mcpg.NewToolResultError(err.Error()), nil
 			}

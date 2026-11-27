@@ -23,6 +23,13 @@ import (
 )
 
 const MaxMediaBytes = 10 << 20
+
+// MaxUploadParts bounds one chunked upload. Clients whose gateway caps a single
+// call (for example around 4 MB) send the file in parts and then finish it.
+const MaxUploadParts = 64
+
+// Pending parts expire if the upload is not finished within this window.
+const uploadPartTTL = time.Hour
 const MaxRequestBytes = 15 << 20
 const EventResource = "whatsapp://events"
 
@@ -83,7 +90,11 @@ func Open(path string) (*Store, error) {
  CREATE TABLE IF NOT EXISTS mcp_media (id TEXT PRIMARY KEY, device_id TEXT NOT NULL,
  filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL,
  expires INTEGER NOT NULL, data BLOB NOT NULL);
- CREATE INDEX IF NOT EXISTS mcp_media_expiry ON mcp_media(expires);`)
+ CREATE INDEX IF NOT EXISTS mcp_media_expiry ON mcp_media(expires);
+ CREATE TABLE IF NOT EXISTS mcp_media_parts (upload_id TEXT NOT NULL, device_id TEXT NOT NULL,
+ idx INTEGER NOT NULL, total INTEGER NOT NULL, size INTEGER NOT NULL, expires INTEGER NOT NULL,
+ data BLOB NOT NULL, PRIMARY KEY(upload_id, idx));
+ CREATE INDEX IF NOT EXISTS mcp_media_parts_expiry ON mcp_media_parts(expires);`)
 	if err != nil {
 		_ = db.Close()
 		return nil, err
@@ -137,9 +148,6 @@ func (s *Store) Stage(ctx context.Context, device, filename, mediaType string, d
 	if err != nil {
 		return Media{}, err
 	}
-	sum := sha256.Sum256(data)
-	m := Media{ID: uuid.NewString(), Filename: filename, MIME: mediaType, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:]), ExpiresAt: s.now().Add(24 * time.Hour).Unix()}
-	m.URI = "whatsapp://media/" + m.ID
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -147,17 +155,209 @@ func (s *Store) Stage(ctx context.Context, device, filename, mediaType string, d
 		return Media{}, err
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(ctx, "DELETE FROM mcp_media WHERE expires<=?", s.now().Unix()); err != nil {
+	m, err := s.stageTx(ctx, tx, device, filename, mediaType, data)
+	if err != nil {
 		return Media{}, err
 	}
-	var total, count int64
-	if err = tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(size),0),COUNT(*) FROM mcp_media").Scan(&total, &count); err != nil {
+	if err = tx.Commit(); err != nil {
+		return Media{}, err
+	}
+	return m, nil
+}
+
+// stageTx inserts validated bytes. Callers hold s.mu and own tx.
+func (s *Store) stageTx(ctx context.Context, tx *sql.Tx, device, filename, mediaType string, data []byte) (Media, error) {
+	sum := sha256.Sum256(data)
+	m := Media{ID: uuid.NewString(), Filename: filename, MIME: mediaType, Size: int64(len(data)), SHA256: hex.EncodeToString(sum[:]), ExpiresAt: s.now().Add(24 * time.Hour).Unix()}
+	m.URI = "whatsapp://media/" + m.ID
+	if err := s.deleteExpiredTx(ctx, tx); err != nil {
+		return Media{}, err
+	}
+	total, count, err := s.usageTx(ctx, tx)
+	if err != nil {
 		return Media{}, err
 	}
 	if total+m.Size > s.mediaBudget || count >= 1024 {
 		return Media{}, errors.New("MCP attachment quota reached; wait for staged attachments to expire")
 	}
 	_, err = tx.ExecContext(ctx, "INSERT INTO mcp_media VALUES(?,?,?,?,?,?,?,?)", m.ID, device, m.Filename, m.MIME, m.Size, m.SHA256, m.ExpiresAt, data)
+	if err != nil {
+		return Media{}, err
+	}
+	return m, nil
+}
+
+func (s *Store) deleteExpiredTx(ctx context.Context, tx *sql.Tx) error {
+	now := s.now().Unix()
+	if _, err := tx.ExecContext(ctx, "DELETE FROM mcp_media WHERE expires<=?", now); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, "DELETE FROM mcp_media_parts WHERE expires<=?", now)
+	return err
+}
+
+// usageTx counts staged files plus pending parts against the shared budget,
+// so unfinished chunked uploads cannot exceed the global byte quota.
+func (s *Store) usageTx(ctx context.Context, tx *sql.Tx) (bytes, files int64, err error) {
+	var partBytes int64
+	if err = tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(size),0),COUNT(*) FROM mcp_media").Scan(&bytes, &files); err != nil {
+		return 0, 0, err
+	}
+	if err = tx.QueryRowContext(ctx, "SELECT COALESCE(SUM(size),0) FROM mcp_media_parts").Scan(&partBytes); err != nil {
+		return 0, 0, err
+	}
+	return bytes + partBytes, files, nil
+}
+
+// UploadPart is the state of a chunked upload after a part was stored.
+type UploadPart struct {
+	UploadID      string `json:"upload_id"`
+	Index         int    `json:"index"`
+	Total         int    `json:"total"`
+	Received      int    `json:"received"`
+	ReceivedBytes int64  `json:"received_bytes"`
+	Complete      bool   `json:"complete"`
+	ExpiresAt     int64  `json:"expires_at"`
+}
+
+// StagePart stores one part of a chunked upload. An empty uploadID starts a new
+// upload. Re-sending the same index replaces that part, so retries are safe.
+// Parts are device-scoped, count against the attachment budget, and expire one
+// hour after the latest part unless FinishUpload turns them into a media item.
+func (s *Store) StagePart(ctx context.Context, device, uploadID string, index, total int, data []byte) (UploadPart, error) {
+	if device == "" {
+		return UploadPart{}, errors.New("missing device scope")
+	}
+	if uploadID == "" {
+		uploadID = uuid.NewString()
+	} else if _, err := uuid.Parse(uploadID); err != nil {
+		return UploadPart{}, errors.New("invalid upload_id")
+	}
+	if total < 1 || total > MaxUploadParts {
+		return UploadPart{}, fmt.Errorf("total must be 1..%d", MaxUploadParts)
+	}
+	if index < 0 || index >= total {
+		return UploadPart{}, errors.New("index must be 0..total-1")
+	}
+	if len(data) == 0 || len(data) > s.maxMediaBytes {
+		return UploadPart{}, fmt.Errorf("part must contain 1..%d bytes", s.maxMediaBytes)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UploadPart{}, err
+	}
+	defer tx.Rollback()
+	if err = s.deleteExpiredTx(ctx, tx); err != nil {
+		return UploadPart{}, err
+	}
+	var parts, otherDevice, uploadBytes, replaced int64
+	var existing int
+	err = tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(device_id<>?),0), COALESCE(SUM(size),0),
+ COALESCE(SUM(CASE WHEN idx=? THEN size ELSE 0 END),0), COALESCE(MAX(total),0)
+ FROM mcp_media_parts WHERE upload_id=?`, device, index, uploadID).Scan(&parts, &otherDevice, &uploadBytes, &replaced, &existing)
+	if err != nil {
+		return UploadPart{}, err
+	}
+	if otherDevice > 0 {
+		return UploadPart{}, errors.New("upload not found for this device or expired")
+	}
+	if parts > 0 && existing != total {
+		return UploadPart{}, fmt.Errorf("total must stay %d for this upload", existing)
+	}
+	size := int64(len(data))
+	if uploadBytes-replaced+size > int64(s.maxMediaBytes) {
+		return UploadPart{}, fmt.Errorf("attachment exceeds %d bytes", s.maxMediaBytes)
+	}
+	used, _, err := s.usageTx(ctx, tx)
+	if err != nil {
+		return UploadPart{}, err
+	}
+	var pending int64
+	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM mcp_media_parts").Scan(&pending); err != nil {
+		return UploadPart{}, err
+	}
+	if used-replaced+size > s.mediaBudget || pending >= 1024 {
+		return UploadPart{}, errors.New("MCP attachment quota reached; wait for staged attachments to expire")
+	}
+	expires := s.now().Add(uploadPartTTL).Unix()
+	if _, err = tx.ExecContext(ctx, "INSERT INTO mcp_media_parts VALUES(?,?,?,?,?,?,?) ON CONFLICT(upload_id,idx) DO UPDATE SET size=excluded.size, data=excluded.data, expires=excluded.expires", uploadID, device, index, total, size, expires, data); err != nil {
+		return UploadPart{}, err
+	}
+	if _, err = tx.ExecContext(ctx, "UPDATE mcp_media_parts SET expires=? WHERE upload_id=?", expires, uploadID); err != nil {
+		return UploadPart{}, err
+	}
+	p := UploadPart{UploadID: uploadID, Index: index, Total: total, ExpiresAt: expires}
+	if err = tx.QueryRowContext(ctx, "SELECT COUNT(*), COALESCE(SUM(size),0) FROM mcp_media_parts WHERE upload_id=?", uploadID).Scan(&p.Received, &p.ReceivedBytes); err != nil {
+		return UploadPart{}, err
+	}
+	p.Complete = p.Received == total
+	if err = tx.Commit(); err != nil {
+		return UploadPart{}, err
+	}
+	return p, nil
+}
+
+// FinishUpload joins every part of a complete upload, validates the result
+// exactly like Stage, and replaces the parts with one ordinary media item.
+func (s *Store) FinishUpload(ctx context.Context, device, uploadID, filename, mediaType string) (Media, error) {
+	if device == "" {
+		return Media{}, errors.New("missing device scope")
+	}
+	if _, err := uuid.Parse(uploadID); err != nil {
+		return Media{}, errors.New("invalid upload_id")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Media{}, err
+	}
+	defer tx.Rollback()
+	if err = s.deleteExpiredTx(ctx, tx); err != nil {
+		return Media{}, err
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT idx,total,data FROM mcp_media_parts WHERE upload_id=? AND device_id=? ORDER BY idx", uploadID, device)
+	if err != nil {
+		return Media{}, err
+	}
+	var joined []byte
+	want, total := 0, 0
+	for rows.Next() {
+		var idx, t int
+		var part []byte
+		if err = rows.Scan(&idx, &t, &part); err != nil {
+			_ = rows.Close()
+			return Media{}, err
+		}
+		if idx != want {
+			_ = rows.Close()
+			return Media{}, fmt.Errorf("upload is missing part %d", want)
+		}
+		total = t
+		want++
+		joined = append(joined, part...)
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return Media{}, err
+	}
+	if want == 0 {
+		return Media{}, errors.New("upload not found for this device or expired")
+	}
+	if want != total {
+		return Media{}, fmt.Errorf("upload is missing part %d of %d", want, total)
+	}
+	mediaType, err = ValidateMedia(filename, mediaType, joined, s.maxMediaBytes)
+	if err != nil {
+		return Media{}, err
+	}
+	if _, err = tx.ExecContext(ctx, "DELETE FROM mcp_media_parts WHERE upload_id=?", uploadID); err != nil {
+		return Media{}, err
+	}
+	m, err := s.stageTx(ctx, tx, device, filename, mediaType, joined)
 	if err != nil {
 		return Media{}, err
 	}
@@ -297,7 +497,7 @@ func (s *Store) pruneLocked(ctx context.Context) error {
 	if _, err = tx.ExecContext(ctx, "DELETE FROM mcp_events WHERE "+old, cutoff); err != nil {
 		return err
 	}
-	if _, err = tx.ExecContext(ctx, "DELETE FROM mcp_media WHERE expires<=?", s.now().Unix()); err != nil {
+	if err = s.deleteExpiredTx(ctx, tx); err != nil {
 		return err
 	}
 	if err = tx.Commit(); err == nil {
