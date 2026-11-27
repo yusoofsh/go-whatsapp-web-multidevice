@@ -110,7 +110,17 @@ Stage bytes without public hosting:
 {"name":"whatsapp_media","arguments":{"action":"upload","filename":"report.pdf","mime_type":"application/pdf","data_base64":"JVBERi0xLjc="}}
 ```
 
-The response contains `media_id`, `uri`, byte size, SHA-256 and expiry; staging sends nothing. Send the returned `media_id` with `whatsapp_send` for documents, images, video, audio or stickers. Supply exactly one source: a staged ID or its corresponding URL. The native implementation retains upstream FFmpeg/media processing. Staged uploads are tested against the actual production validators as well as fake send clients.
+The response contains `media_id`, `uri`, byte size, SHA-256 and expiry; staging sends nothing.
+
+When a gateway caps each call below the file's base64 size, split the raw bytes and send each part base64-encoded on its own. Omit `upload_id` on the first part and reuse the returned one; parts may arrive in any order, and re-sending an index replaces it:
+
+```json
+{"name":"whatsapp_media","arguments":{"action":"upload_chunk","index":0,"total":4,"data_base64":"<part 0>"}}
+{"name":"whatsapp_media","arguments":{"action":"upload_chunk","upload_id":"<id>","index":1,"total":4,"data_base64":"<part 1>"}}
+{"name":"whatsapp_media","arguments":{"action":"upload_finish","upload_id":"<id>","filename":"clip.mp4","mime_type":"video/mp4"}}
+```
+
+`upload_finish` joins the parts, applies the same validation and limits as `upload`, and returns an ordinary `media_id`. Uploads take at most 64 parts, stay device-scoped, count against the global quota while pending, and expire one hour after the latest part if not finished. Send the returned `media_id` with `whatsapp_send` for documents, images, video, audio or stickers. Supply exactly one source: a staged ID or its corresponding URL. The native implementation retains upstream FFmpeg/media processing. Staged uploads are tested against the actual production validators as well as fake send clients.
 
 `whatsapp_message.action=download_media` downloads into private storage and returns metadata plus an inline image or embedded binary resource. `inline=false` omits inline bytes. Newsletter downloads follow the same private import path. Read `whatsapp://media/<id>` with `resources/read`, or use the tool fallback:
 

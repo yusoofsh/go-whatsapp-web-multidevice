@@ -148,3 +148,49 @@ func TestPrivateMediaDirectory(t *testing.T) {
 	require.NoError(t, os.Symlink(public, link))
 	require.Error(t, ValidatePrivateDataDir(filepath.Join(link, "uploads"), public))
 }
+
+func TestChunkedAttachmentUploadOverMCP(t *testing.T) {
+	data := parityStore(t)
+	d := pairedTestDevice("a", "62811")
+	ctx := whatsapp.ContextWithDevice(context.Background(), d)
+	resolver := &stubResolver{inst: d}
+	send := &stubSendService{}
+	s := NewServer(Deps{Data: data, Send: send}, resolver)
+	content := append([]byte("%PDF-1.7\n"), make([]byte, 3<<20)...)
+	const size = 1 << 20
+	uploadID := ""
+	total := (len(content) + size - 1) / size
+	for i := 0; i < total; i++ {
+		part := content[i*size : min((i+1)*size, len(content))]
+		args := map[string]any{"action": "upload_chunk", "index": i, "total": total, "data_base64": base64.StdEncoding.EncodeToString(part)}
+		if uploadID != "" {
+			args["upload_id"] = uploadID
+		}
+		res := invokeData(t, s, ctx, "tools/call", map[string]any{"name": "whatsapp_media", "arguments": args})
+		require.Nil(t, res["error"])
+		result := res["result"].(map[string]any)
+		require.NotEqual(t, true, result["isError"], result)
+		meta := result["structuredContent"].(map[string]any)
+		uploadID = meta["upload_id"].(string)
+		require.Equal(t, i == total-1, meta["complete"])
+	}
+	bad := invokeData(t, s, ctx, "tools/call", map[string]any{"name": "whatsapp_media", "arguments": map[string]any{"action": "upload_chunk", "index": 0, "total": 2, "data_base64": "!bad!"}})
+	require.Equal(t, true, bad["result"].(map[string]any)["isError"])
+	other := whatsapp.ContextWithDevice(context.Background(), pairedTestDevice("b", "62822"))
+	denied := invokeData(t, NewServer(Deps{Data: data}, &stubResolver{inst: pairedTestDevice("b", "62822")}), other, "tools/call", map[string]any{"name": "whatsapp_media", "arguments": map[string]any{"action": "upload_finish", "upload_id": uploadID, "filename": "report.pdf", "mime_type": "application/pdf"}})
+	require.Equal(t, true, denied["result"].(map[string]any)["isError"])
+	fin := invokeData(t, s, ctx, "tools/call", map[string]any{"name": "whatsapp_media", "arguments": map[string]any{"action": "upload_finish", "upload_id": uploadID, "filename": "report.pdf", "mime_type": "application/pdf"}})
+	require.Nil(t, fin["error"])
+	result := fin["result"].(map[string]any)
+	require.NotEqual(t, true, result["isError"], result)
+	id := result["structuredContent"].(map[string]any)["media_id"].(string)
+	sent, err := InitMcpSend(send, resolver, data).handleSend(ctx, callReq(map[string]any{"type": "document", "phone": "62833", "media_id": id}))
+	require.NoError(t, err)
+	require.False(t, sent.IsError)
+	file, err := send.lastFile.File.Open()
+	require.NoError(t, err)
+	defer file.Close()
+	got, err := io.ReadAll(file)
+	require.NoError(t, err)
+	require.Equal(t, content, got)
+}

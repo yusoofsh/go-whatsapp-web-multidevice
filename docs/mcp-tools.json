@@ -925,7 +925,7 @@
         "openWorldHint": true,
         "readOnlyHint": false
       },
-      "description": "Stage an attachment with action=upload, data_base64, filename, mime_type; then send using whatsapp_send media_id. action=read returns bytes over MCP. Maximum 10 MiB/file, 24-hour expiry, device-scoped. No server paths.",
+      "description": "Stage an attachment with action=upload, data_base64, filename, mime_type; then send using whatsapp_send media_id. When one call cannot carry the file, split the raw bytes and send each part with action=upload_chunk, data_base64 (that part alone), index, total, reusing the returned upload_id; then action=upload_finish with upload_id, filename, mime_type returns the media_id. Unfinished parts expire after 1 hour. action=read returns bytes over MCP. Maximum 10 MiB/file, 24-hour expiry, device-scoped. No server paths.",
       "inputSchema": {
         "allOf": [
           {
@@ -939,6 +939,38 @@
             "then": {
               "required": [
                 "data_base64",
+                "filename",
+                "mime_type"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "upload_chunk"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "data_base64",
+                "index",
+                "total"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "action": {
+                  "const": "upload_finish"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "upload_id",
                 "filename",
                 "mime_type"
               ]
@@ -963,6 +995,8 @@
           "action": {
             "enum": [
               "upload",
+              "upload_chunk",
+              "upload_finish",
               "read"
             ],
             "type": "string"
@@ -983,12 +1017,29 @@
             "description": "Include data_base64 in structuredContent for clients which discard binary content; default false",
             "type": "boolean"
           },
+          "index": {
+            "description": "Zero-based part number",
+            "maximum": 63,
+            "minimum": 0,
+            "type": "integer"
+          },
           "media_id": {
             "maxLength": 36,
             "type": "string"
           },
           "mime_type": {
             "maxLength": 120,
+            "type": "string"
+          },
+          "total": {
+            "description": "Number of parts; the same on every part",
+            "maximum": 64,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "upload_id": {
+            "description": "Returned by the first upload_chunk; omit it there to start a new upload",
+            "maxLength": 36,
             "type": "string"
           }
         },
